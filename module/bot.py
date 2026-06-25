@@ -167,6 +167,10 @@ class DownloadBot:
                 _t("Forward video, use the method to directly enter /forward to view"),
             ),
             types.BotCommand(
+                "forward_screenshot",
+                _t("Forward video to channel with screenshot, video in comments"),
+            ),
+            types.BotCommand(
                 "listen_forward",
                 _t(
                     "Listen forward, use the method to directly enter /listen_forward to view"
