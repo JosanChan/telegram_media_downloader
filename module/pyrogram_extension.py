@@ -1516,22 +1516,38 @@ async def _flush_album_mode(client, node, items):
                         pass
                     try:
                         path = await asyncio.wait_for(
-                            client.download_media(msg.video), timeout=120)
+                            client.download_media(msg.video,
+                                progress=update_upload_stat,
+                                progress_args=(msg.id, os.path.basename(str(msg.video.file_id)),
+                                    time.time(), node, client)),
+                            timeout=300)
                         temp_files.append(str(path))
                         media_list.append(
                             pyrogram.types.InputMediaVideo(
-                                media=str(path), caption=cap))
+                                media=str(path), caption=cap,
+                                width=msg.video.width,
+                                height=msg.video.height,
+                                duration=msg.video.duration,
+                                supports_streaming=True))
+                        node.stat_forward(ForwardStatus.SuccessForward)
+                        await report_bot_status(node.bot, node)
                     except asyncio.TimeoutError:
                         logger.warning(f"Download timeout for msg {msg.id}, skipping")
+                        node.stat_forward(ForwardStatus.FailedForward)
+                        await report_bot_status(node.bot, node)
                         continue
                     except Exception as e:
                         logger.error(f"Download failed for msg {msg.id}: {e}")
+                        node.stat_forward(ForwardStatus.FailedForward)
+                        await report_bot_status(node.bot, node)
                         continue
                 elif msg.photo:
                     media_list.append(
                         pyrogram.types.InputMediaPhoto(
                             media=msg.photo.file_id,
                             caption=cap if j == 0 else ""))
+                    node.stat_forward(ForwardStatus.SuccessForward)
+                    await report_bot_status(node.bot, node)
                 elif msg.document:
                     try:
                         fresh = await client.get_messages(node.chat_id, msg.id)
@@ -1541,16 +1557,27 @@ async def _flush_album_mode(client, node, items):
                         pass
                     try:
                         path = await asyncio.wait_for(
-                            client.download_media(msg.document), timeout=120)
+                            client.download_media(msg.document,
+                                progress=update_upload_stat,
+                                progress_args=(msg.id, os.path.basename(str(msg.document.file_id)),
+                                    time.time(), node, client)),
+                            timeout=300)
                         temp_files.append(str(path))
                         media_list.append(
                             pyrogram.types.InputMediaDocument(
-                                media=str(path), caption=cap))
+                                media=str(path), caption=cap,
+                                attributes=msg.document.attributes))
+                        node.stat_forward(ForwardStatus.SuccessForward)
+                        await report_bot_status(node.bot, node)
                     except asyncio.TimeoutError:
                         logger.warning(f"Download timeout for msg {msg.id}, skipping")
+                        node.stat_forward(ForwardStatus.FailedForward)
+                        await report_bot_status(node.bot, node)
                         continue
                     except Exception as e:
                         logger.error(f"Download failed for msg {msg.id}: {e}")
+                        node.stat_forward(ForwardStatus.FailedForward)
+                        await report_bot_status(node.bot, node)
                         continue
 
             if media_list:
