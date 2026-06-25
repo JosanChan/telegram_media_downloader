@@ -3,6 +3,7 @@
 import asyncio
 import os
 import subprocess
+import subprocess
 import secrets
 import struct
 import time
@@ -1552,6 +1553,13 @@ async def _flush_album_mode(client, node, items):
                                 temp_files.append(fixed)
                                 path = fixed
                                 logger.info("Transcode msg %s complete", msg.id)
+                        if _needs_transcode(str(path)):
+                            logger.info("Transcoding msg %s to H.264...", msg.id)
+                            fixed = _transcode_video(str(path))
+                            if fixed:
+                                temp_files.append(fixed)
+                                path = fixed
+                                logger.info("Transcode msg %s complete", msg.id)
                         temp_files.append(str(path))
                         media_list.append(
                             pyrogram.types.InputMediaVideo(
@@ -1621,6 +1629,33 @@ async def _flush_album_mode(client, node, items):
             except Exception:
                 pass
 
+
+def _needs_transcode(video_path):
+    """Detect if video needs H.264 transcoding via ffprobe"""
+    try:
+        r = subprocess.run(
+            ["ffprobe", "-v", "error", "-select_streams", "v:0",
+             "-show_entries", "stream=codec_name",
+             "-of", "default=noprint_wrappers=1:nokey=1", video_path],
+            capture_output=True, text=True, timeout=10)
+        return r.stdout.strip().lower() not in ("h264",)
+    except Exception:
+        return True
+
+
+def _transcode_video(video_path):
+    """Transcode video to H.264 + AAC via ffmpeg"""
+    out = video_path + "_h264.mp4"
+    try:
+        subprocess.run(
+            ["ffmpeg", "-i", video_path, "-c:v", "libx264",
+             "-c:a", "aac", "-movflags", "+faststart", out, "-y"],
+            capture_output=True, text=True, timeout=600)
+        if os.path.exists(out) and os.path.getsize(out) > 0:
+            return out
+    except Exception:
+        pass
+    return None
 
 def _needs_transcode(video_path):
     """Detect if video needs H.264 transcoding via ffprobe"""
