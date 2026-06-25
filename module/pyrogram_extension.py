@@ -1460,8 +1460,8 @@ async def _flush_multi_thumb(client, app, node, items):
     for f in thumb_files:
         try:
             os.remove(f)
-    except Exception as e:
-        logger.warning(f"discussion group fallback: {e}")
+        except Exception:
+            pass
             pass
 
     try:
@@ -1471,7 +1471,8 @@ async def _flush_multi_thumb(client, app, node, items):
             await item.copy(disc.chat.id,
                 reply_to_message_id=disc.id,
                 message_thread_id=node.topic_id, caption="")
-    except Exception:
+    except Exception as e:
+        logger.warning(f"discussion group fallback: {e}")
         for item in items:
             await item.copy(node.upload_telegram_chat_id,
                 reply_to_message_id=photo_msg.id,
