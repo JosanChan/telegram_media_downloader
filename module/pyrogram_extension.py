@@ -1508,7 +1508,7 @@ async def _flush_album_mode(client, node, items):
             for j, msg in enumerate(batch):
                 cap = combined if j == 0 else ""
                 if msg.video:
-                    path = await client.download_media(msg.video.file_id)
+                    path = await client.download_media(msg.video)
                     temp_files.append(str(path))
                     media_list.append(
                         pyrogram.types.InputMediaVideo(
@@ -1519,7 +1519,7 @@ async def _flush_album_mode(client, node, items):
                             media=msg.photo.file_id,
                             caption=cap if j == 0 else ""))
                 elif msg.document:
-                    path = await client.download_media(msg.document.file_id)
+                    path = await client.download_media(msg.document)
                     temp_files.append(str(path))
                     media_list.append(
                         pyrogram.types.InputMediaDocument(
