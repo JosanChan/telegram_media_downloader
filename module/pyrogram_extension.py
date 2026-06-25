@@ -854,7 +854,7 @@ async def report_bot_status(
     try:
         return await _report_bot_status(client, node, immediate_reply)
     except Exception as e:
-        logger.debug(f"{e}")
+        logger.warning(f"report_bot_status error: {e}")
 
 
 async def _report_bot_status(
@@ -898,10 +898,6 @@ async def _report_bot_status(
             if value.transferred == value.total:
                 continue
 
-            try:
-                pct = int(value.percentage.split("%")[0])
-            except (ValueError, IndexError):
-                pct = 0
             temp_file_name = truncate_filename(os.path.basename(value.file_name), 10)
             upload_msg_detail_str += (
                 f" ├─ 🆔 {_t('Message ID')}: {idx}\n"
@@ -909,7 +905,7 @@ async def _report_bot_status(
                 f" │   ├─ 📏 : {value.total}\n"
                 f" │   ├─ ⏫ : {value.speed}\n"
                 f" │   └─ 📊 : ["
-                f'{create_progress_bar(pct)}]'
+                f'{create_progress_bar(int(value.percentage.split("%")[0]))}]'
                 f" ({value.percentage})%\n"
             )
 
@@ -925,10 +921,7 @@ async def _report_bot_status(
                 temp_file_name = truncate_filename(
                     os.path.basename(value["file_name"]), 10
                 )
-                try:
-                    progress = int(value["down_byte"] / max(value["total_size"], 1) * 100)
-                except ValueError:
-                    progress = 0
+                progress = int(value["down_byte"] / value["total_size"] * 100)
                 download_result_str += (
                     f" ├─ 🆔 {_t('Message ID')}: {idx}\n"
                     f" │   ├─ 📁 : {temp_file_name}\n"
@@ -949,10 +942,7 @@ async def _report_bot_status(
                 continue
 
             temp_file_name = truncate_filename(os.path.basename(value.file_name), 10)
-            try:
-                progress = int(value.upload_size / max(value.total_size, 1) * 100)
-            except ValueError:
-                progress = 0
+            progress = int(value.upload_size / value.total_size * 100)
             upload_result_str += (
                 f" ├─ 🆔 {_t('Message ID')}: {idx}\n"
                 f" │   ├─ 📁 : {temp_file_name}\n"
@@ -1226,6 +1216,22 @@ async def update_upload_stat(
         node.upload_stat_dict[message_id] = upload_stat
 
 
+    if message_id not in node.cloud_drive_upload_stat_dict:
+        node.cloud_drive_upload_stat_dict[message_id] = CloudDriveUploadStat(
+            file_name=file_name, transferred="", total="",
+            percentage="", speed="", eta="")
+    cds = node.cloud_drive_upload_stat_dict[message_id]
+    total_sz = max(total_size, 1)
+    cds.transferred = str(upload_size)
+    cds.total = str(total_sz)
+    cds.percentage = f"{int(upload_size/total_sz*100)}%"
+    cds.speed = f"{max(upload_stat.upload_speed, 0)/1048576:.1f} MB/s"
+    if not hasattr(node, "_rpt_tick"):
+        node._rpt_tick = 0
+    node._rpt_tick += 1
+    if node._rpt_tick % 3 == 0:
+        await report_bot_status(node.bot, node, immediate_reply=True)
+
 # pylint: enable=W0201
 class HookSession(pyrogram.session.Session):
     """Hook Session"""
@@ -1440,6 +1446,7 @@ async def _flush_single_thumb(client, app, node, items):
 async def _flush_multi_thumb(client, app, node, items):
     """Mode A-多个: 媒体组缩略图相册帖 + 全部内容进评论区"""
     import pyrogram
+    await report_bot_status(client, node)
     thumb_files = []
     media_list = []
 
@@ -1506,23 +1513,88 @@ async def _flush_album_mode(node, items):
         for j, msg in enumerate(batch):
             cap = combined if j == 0 else ""
             if msg.video:
-                media_list.append(
-                    pyrogram.types.InputMediaVideo(
-                        media=msg.video.file_id, caption=cap))
+                try:
+                    fresh = await client.get_messages(node.chat_id, msg.id)
+                    if fresh and fresh.video:
+                        msg = fresh
+                except Exception:
+                    pass
+                try:
+                    path = await asyncio.wait_for(
+                        client.download_media(msg.video,
+                            progress=update_upload_stat,
+                            progress_args=(msg.id, os.path.basename(str(msg.video.file_id)),
+                                time.time(), node, client)),
+                        timeout=300)
+                    temp_files.append(str(path))
+                    if _needs_transcode(str(path)):
+                        logger.info("Transcoding msg %s to H.264...", msg.id)
+                        fixed = _transcode_video(str(path))
+                        if fixed:
+                            temp_files.append(fixed)
+                            path = fixed
+                            logger.info("Transcode msg %s complete", msg.id)
+                    media_list.append(
+                        pyrogram.types.InputMediaVideo(
+                            media=str(path), caption=cap,
+                            width=msg.video.width,
+                            height=msg.video.height,
+                            duration=msg.video.duration,
+                            supports_streaming=True))
+                    node.stat_forward(ForwardStatus.SuccessForward)
+                    await report_bot_status(node.bot, node, immediate_reply=True)
+                except asyncio.TimeoutError:
+                    logger.warning("Download timeout for msg %s, skipping", msg.id)
+                    node.stat_forward(ForwardStatus.FailedForward)
+                    await report_bot_status(node.bot, node, immediate_reply=True)
+                    continue
+                except Exception as e:
+                    logger.error("Download failed for msg %s: %s", msg.id, e)
+                    node.stat_forward(ForwardStatus.FailedForward)
+                    await report_bot_status(node.bot, node, immediate_reply=True)
+                    continue
             elif msg.photo:
                 media_list.append(
                     pyrogram.types.InputMediaPhoto(
                         media=msg.photo.file_id))
+                node.stat_forward(ForwardStatus.SuccessForward)
             elif msg.document:
-                media_list.append(
-                    pyrogram.types.InputMediaDocument(
-                        media=msg.document.file_id))
-        await node.upload_user.send_media_group(
-            node.upload_telegram_chat_id, media_list,
-            message_thread_id=node.topic_id)
+                try:
+                    fresh = await client.get_messages(node.chat_id, msg.id)
+                    if fresh and fresh.document:
+                        msg = fresh
+                except Exception:
+                    pass
+                try:
+                    path = await asyncio.wait_for(
+                        client.download_media(msg.document,
+                            progress=update_upload_stat,
+                            progress_args=(msg.id, os.path.basename(str(msg.document.file_id)),
+                                time.time(), node, client)),
+                        timeout=300)
+                    temp_files.append(str(path))
+                    media_list.append(
+                        pyrogram.types.InputMediaDocument(
+                            media=str(path), caption=cap,
+                            attributes=msg.document.attributes))
+                    node.stat_forward(ForwardStatus.SuccessForward)
+                    await report_bot_status(node.bot, node, immediate_reply=True)
+                except asyncio.TimeoutError:
+                    logger.warning("Download timeout for msg %s, skipping", msg.id)
+                    node.stat_forward(ForwardStatus.FailedForward)
+                    await report_bot_status(node.bot, node, immediate_reply=True)
+                    continue
+                except Exception as e:
+                    logger.error("Download failed for msg %s: %s", msg.id, e)
+                    node.stat_forward(ForwardStatus.FailedForward)
+                    await report_bot_status(node.bot, node, immediate_reply=True)
+                    continue
+        if media_list:
+            await node.upload_user.send_media_group(
+                node.upload_telegram_chat_id, media_list,
+                message_thread_id=node.topic_id)
 
 def _needs_transcode(video_path):
-    """Detect if video needs H.264 transcoding via ffprobe"""
     try:
         r = subprocess.run(
             ["ffprobe", "-v", "error", "-select_streams", "v:0",
@@ -1533,9 +1605,7 @@ def _needs_transcode(video_path):
     except Exception:
         return True
 
-
 def _transcode_video(video_path):
-    """Transcode video to H.264 + AAC via ffmpeg"""
     out = video_path + "_h264.mp4"
     try:
         subprocess.run(

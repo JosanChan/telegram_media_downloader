@@ -429,9 +429,6 @@ async def send_help_str(client: pyrogram.Client, chat_id):
         f"/get_info - {_t('Get group and user info from message link')}\n"
         f"/download - {_t('Download messages')}\n"
         f"/forward - {_t('Forward messages')}\n"
-        f"/forward_screenshot - {_t('Forward video to channel with screenshot, video in comments')}\n"
-        f"/forward_multi - {_t('Multi video screenshot forward')}\n"
-        f"/forward_album - {_t('Merge multiple videos into album')}\n"
         f"/listen_forward - {_t('Listen for forwarded messages')}\n"
         f"/forward_to_comments - {_t('Forward a specific media to a comment section')}\n"
         f"/set_language - {_t('Set language')}\n"
@@ -603,7 +600,6 @@ async def direct_download(
 
     node.client = client
 
-    node.upload_user = _bot.client
     _bot.add_task_node(node)
 
     await _bot.add_download_task(
@@ -978,9 +974,8 @@ async def forward_message_impl(
                     node.forward_multi_buffer.append(item)
                     if item.caption:
                         node.forward_multi_captions.append(item.caption)
-                    if not node.forward_album_mode:
-                        node.stat_forward(ForwardStatus.SuccessForward)
                     continue
+
                 await forward_normal_content(client, node, item)
                 if node.is_stop_transmission:
                     await client.edit_message_text(
@@ -997,15 +992,13 @@ async def forward_message_impl(
             )
         finally:
             if node.forward_multi_buffer and (node.forward_multi_mode or node.forward_album_mode):
-                try:
-                    from module.pyrogram_extension import finalize_forward_multi
-                    await finalize_forward_multi(_bot.client, _bot.app, node)
-                except Exception as e:
-                    logger.error(f"finalize_forward_multi failed: {e}")
+                from module.pyrogram_extension import finalize_forward_multi
+                await finalize_forward_multi(client, _bot.app, node)
 
             await report_bot_status(client, node, immediate_reply=True)
 
             node.stop_transmission()
+    else:
         await forward_msg(node, offset_id)
 
 
@@ -1032,7 +1025,6 @@ async def forward_multi_handler(client: pyrogram.Client, message: pyrogram.types
         'src': args[1], 'dst': args[2],
         'start': int(args[3]), 'end': int(args[4]),
         'user_id': message.from_user.id,
-                'reply_to_msg_id': message.id,
     }
 
     keyboard = InlineKeyboardMarkup([
@@ -1072,7 +1064,7 @@ async def forward_multi_callback(client: pyrogram.Client, callback_query: pyrogr
     fake.chat = FakeMsg()
     fake.chat.id = params['user_id']
     fake.text = f"/forward_multi {params['src']} {params['dst']} {params['start']} {params['end']}"
-    fake.id = params['reply_to_msg_id']
+    fake.id = callback_query.message.id
 
     single_thumb = (mode == "single")
     await forward_message_impl(client, fake, False, multi_mode=True, multi_single_thumb=single_thumb)
