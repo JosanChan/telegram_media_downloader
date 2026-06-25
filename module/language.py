@@ -76,6 +76,11 @@ translations = {
         "Переслать видео, введите /forward для просмотра",
         "Переслати відео, введіть /forward для перегляду",
     ],
+    "Forward video to channel with screenshot, video in comments": [
+        "截图转发视频，使用方法直接输入/forward_screenshot查看",
+        "Переслать видео со скриншотом, введите /forward_screenshot",
+        "Переслати відео зі скріншотом, введіть /forward_screenshot",
+    ],
     "Listen forward, use the method to directly enter /listen_forward to view": [
         "监控转发，使用方法直接输入/listen_forward查看",
         "Слушать пересылку, введите /listen_forward для просмотра",
