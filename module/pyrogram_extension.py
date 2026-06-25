@@ -927,7 +927,7 @@ async def _report_bot_status(
                 temp_file_name = truncate_filename(
                     os.path.basename(value["file_name"]), 10
                 )
-                progress = int(value["down_byte"] / value["total_size"] * 100)
+                progress = int(value["down_byte"] / max(value["total_size"], 1) * 100)
                 download_result_str += (
                     f" ├─ 🆔 {_t('Message ID')}: {idx}\n"
                     f" │   ├─ 📁 : {temp_file_name}\n"
@@ -948,7 +948,7 @@ async def _report_bot_status(
                 continue
 
             temp_file_name = truncate_filename(os.path.basename(value.file_name), 10)
-            progress = int(value.upload_size / value.total_size * 100)
+            progress = int(value.upload_size / max(value.total_size, 1) * 100)
             upload_result_str += (
                 f" ├─ 🆔 {_t('Message ID')}: {idx}\n"
                 f" │   ├─ 📁 : {temp_file_name}\n"
@@ -1221,6 +1221,24 @@ async def update_upload_stat(
         )
         node.upload_stat_dict[message_id] = upload_stat
 
+
+    # Sync to cloud_drive_upload_stat_dict for progress bar
+    if message_id not in node.cloud_drive_upload_stat_dict:
+        node.cloud_drive_upload_stat_dict[message_id] = CloudDriveUploadStat(
+            file_name=file_name, transferred="", total="",
+            percentage="", speed="", eta="")
+    cds = node.cloud_drive_upload_stat_dict[message_id]
+    total_sz = max(total_size, 1)
+    cds.transferred = f"{upload_size/1048576:.1f} MB"
+    cds.total = f"{total_sz/1048576:.1f} MB"
+    cds.percentage = f"{upload_size/total_sz*100:.1f}"
+    cds.speed = f"{max(upload_stat.upload_speed, 0)/1048576:.1f} MB/s"
+    # Periodic UI refresh (every ~2s)
+    if not hasattr(node, "_rpt_tick"):
+        node._rpt_tick = 0
+    node._rpt_tick += 1
+    if node._rpt_tick % 3 == 0:
+        await report_bot_status(node.bot, node, immediate_reply=True)
 
 # pylint: enable=W0201
 class HookSession(pyrogram.session.Session):
