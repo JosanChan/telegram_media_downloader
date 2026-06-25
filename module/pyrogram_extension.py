@@ -564,6 +564,10 @@ async def _upload_telegram_chat_message(
                     thumb_path = await download_thumbnail(
                         client, app.temp_save_path, message
                     )
+                    if not caption:
+                        caption = "视频详见评论区👇"
+                    else:
+                        caption = caption + "\n\n视频详见评论区👇"
                     if thumb_path:
                         photo_msg = await upload_user.send_photo(
                             node.upload_telegram_chat_id,
@@ -1417,7 +1421,7 @@ async def _flush_single_thumb(client, app, node, items):
 
     captions = [c for c in node.forward_multi_captions if c]
     caption = "\n---\n".join(captions[:3]) if captions else ""
-    caption += f"\n\n共{len(items)}个素材"
+    caption += f"\n\n共{len(items)}个素材\n\n视频详见评论区👇"
 
     if thumb:
         photo_msg = await client.send_photo(
@@ -1452,7 +1456,7 @@ async def _flush_multi_thumb(client, app, node, items):
 
     captions = [c for c in node.forward_multi_captions if c]
     combined = "\n---\n".join(captions[:3]) if captions else ""
-    combined += f"\n\n共{len(items)}个素材"
+    combined += f"\n\n共{len(items)}个素材\n\n视频详见评论区👇"
 
     for i, item in enumerate(items[:10]):
         thumb = None
@@ -1498,7 +1502,9 @@ async def _flush_album_mode(client, node, items):
     """Mode B: 合并媒体项为媒体组(<=10/组)，文字单独转发"""
     import pyrogram
     captions = [c for c in node.forward_multi_captions if c]
-    combined = "\n---\n".join(captions) if captions else ""
+    combined = "\n---\n".join(captions) if captions else "视频详见评论区👇"
+    if captions:
+        combined = "\n---\n".join(captions) + "\n\n视频详见评论区👇"
 
     media_items = [m for m in items if m.video or m.photo or m.document]
     text_items = [m for m in items if m not in media_items]
