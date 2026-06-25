@@ -1487,9 +1487,11 @@ async def _flush_album_mode(client, node, items):
     """Mode B: 合并媒体项为媒体组(<=10/组)，文字单独转发"""
     import pyrogram
     captions = [c for c in node.forward_multi_captions if c]
-    combined = "\n---\n".join(captions) if captions else "视频详见评论区👇"
-        if captions:
-            combined = "\n---\n".join(captions) + "\n\n视频详见评论区👇"
+    combined = "\n---\n".join(captions) if captions else ""
+    if captions:
+        combined = "\n---\n".join(captions) + "\n\n视频详见评论区👇"
+    else:
+        combined = "视频详见评论区👇"
 
     media_items = [m for m in items if m.video or m.photo or m.document]
     text_items = [m for m in items if m not in media_items]
