@@ -603,6 +603,7 @@ async def direct_download(
 
     node.client = client
 
+    node.upload_user = _bot.client
     _bot.add_task_node(node)
 
     await _bot.add_download_task(
@@ -977,6 +978,7 @@ async def forward_message_impl(
                     node.forward_multi_buffer.append(item)
                     if item.caption:
                         node.forward_multi_captions.append(item.caption)
+                    node.stat_forward(ForwardStatus.SuccessForward)
                     continue
 
                 await forward_normal_content(client, node, item)
@@ -995,13 +997,15 @@ async def forward_message_impl(
             )
         finally:
             if node.forward_multi_buffer and (node.forward_multi_mode or node.forward_album_mode):
-                from module.pyrogram_extension import finalize_forward_multi
-                await finalize_forward_multi(_bot.client, _bot.app, node)
+                try:
+                    from module.pyrogram_extension import finalize_forward_multi
+                    await finalize_forward_multi(_bot.client, _bot.app, node)
+                except Exception as e:
+                    logger.error(f"finalize_forward_multi failed: {e}")
 
             await report_bot_status(client, node, immediate_reply=True)
 
             node.stop_transmission()
-    else:
         await forward_msg(node, offset_id)
 
 
@@ -1028,6 +1032,7 @@ async def forward_multi_handler(client: pyrogram.Client, message: pyrogram.types
         'src': args[1], 'dst': args[2],
         'start': int(args[3]), 'end': int(args[4]),
         'user_id': message.from_user.id,
+                'reply_to_msg_id': message.id,
     }
 
     keyboard = InlineKeyboardMarkup([
@@ -1067,7 +1072,7 @@ async def forward_multi_callback(client: pyrogram.Client, callback_query: pyrogr
     fake.chat = FakeMsg()
     fake.chat.id = params['user_id']
     fake.text = f"/forward_multi {params['src']} {params['dst']} {params['start']} {params['end']}"
-    fake.id = callback_query.message.id
+    fake.id = params['reply_to_msg_id']
 
     single_thumb = (mode == "single")
     await forward_message_impl(client, fake, False, multi_mode=True, multi_single_thumb=single_thumb)
