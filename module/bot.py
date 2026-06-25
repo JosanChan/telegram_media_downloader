@@ -981,7 +981,6 @@ async def forward_message_impl(
                     if not node.forward_album_mode:
                         node.stat_forward(ForwardStatus.SuccessForward)
                     continue
-
                 await forward_normal_content(client, node, item)
                 if node.is_stop_transmission:
                     await client.edit_message_text(
