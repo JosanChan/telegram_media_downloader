@@ -68,6 +68,7 @@ class DownloadBot:
 
         self.download_filter: List[str] = []
         self.task_id: int = 0
+        self.pending_forward_multi = {}
         self.reply_task = None
 
     def gen_task_id(self) -> int:
@@ -171,6 +172,14 @@ class DownloadBot:
                 _t("Forward video to channel with screenshot, video in comments"),
             ),
             types.BotCommand(
+                "forward_multi",
+                _t("Multi video screenshot forward"),
+            ),
+            types.BotCommand(
+                "forward_album",
+                _t("Merge multiple videos into album"),
+            ),
+            types.BotCommand(
                 "listen_forward",
                 _t(
                     "Listen forward, use the method to directly enter /listen_forward to view"
@@ -234,6 +243,26 @@ class DownloadBot:
                 forward_screenshot,
                 filters=pyrogram.filters.command(["forward_screenshot"])
                 & pyrogram.filters.user(self.allowed_user_ids),
+            )
+        )
+        self.bot.add_handler(
+            MessageHandler(
+                forward_multi_handler,
+                filters=pyrogram.filters.command(["forward_multi"])
+                & pyrogram.filters.user(self.allowed_user_ids),
+            )
+        )
+        self.bot.add_handler(
+            MessageHandler(
+                forward_album_handler,
+                filters=pyrogram.filters.command(["forward_album"])
+                & pyrogram.filters.user(self.allowed_user_ids),
+            )
+        )
+        self.bot.add_handler(
+            CallbackQueryHandler(
+                forward_multi_callback,
+                filters=pyrogram.filters.regex(r"^fwmulti_")
             )
         )
         self.bot.add_handler(
@@ -760,6 +789,8 @@ async def get_forward_task_node(
     download_filter: str = None,
     reply_comment: bool = False,
     screenshot_mode: bool = False,
+    multi_mode: bool = False,
+    multi_single_thumb: bool = True,
 ):
     """Get task node"""
     limit: int = 0
@@ -869,6 +900,8 @@ async def get_forward_task_node(
 async def forward_message_impl(
     client: pyrogram.Client, message: pyrogram.types.Message, reply_comment: bool,
     screenshot_mode: bool = False,
+    multi_mode: bool = False,
+    multi_single_thumb: bool = True,
 ):
     """
     Forward message
@@ -913,6 +946,8 @@ async def forward_message_impl(
         download_filter,
         reply_comment,
         screenshot_mode=screenshot_mode,
+        multi_mode=multi_mode,
+        multi_single_thumb=multi_single_thumb,
     )
 
     if not node:
@@ -928,6 +963,12 @@ async def forward_message_impl(
                 offset_id=offset_id,
                 reverse=True,
             ):
+                if node.forward_multi_mode or node.forward_album_mode:
+                    node.forward_multi_buffer.append(item)
+                    if item.caption:
+                        node.forward_multi_captions.append(item.caption)
+                    continue
+
                 await forward_normal_content(client, node, item)
                 if node.is_stop_transmission:
                     await client.edit_message_text(
@@ -943,6 +984,10 @@ async def forward_message_impl(
                 f"{_t('Error forwarding message')} {e}",
             )
         finally:
+            if node.forward_multi_buffer and (node.forward_multi_mode or node.forward_album_mode):
+                from module.pyrogram_extension import finalize_forward_multi
+                await finalize_forward_multi(client, _bot.app, node)
+
             await report_bot_status(client, node, immediate_reply=True)
 
             node.stop_transmission()
@@ -954,6 +999,68 @@ async def forward_screenshot(client: pyrogram.Client, message: pyrogram.types.Me
     """截图转发：缩略图+文案发频道帖，视频发讨论组评论区"""
     return await forward_message_impl(client, message, False, screenshot_mode=True)
 
+
+async def forward_multi_handler(client: pyrogram.Client, message: pyrogram.types.Message):
+    """多视频截图转发 — 交互弹窗选择模式"""
+    args = message.text.split(maxsplit=5)
+    if len(args) < 5:
+        await client.send_message(message.from_user.id,
+            f"{_t('Invalid command format')}. /forward_multi src dst start end")
+        return
+    try:
+        int(args[3]); int(args[4])
+    except Exception:
+        await client.send_message(message.from_user.id, _t('Invalid command format'))
+        return
+
+    task_key = f"{message.from_user.id}_{int(time.time())}"
+    _bot.pending_forward_multi[task_key] = {
+        'src': args[1], 'dst': args[2],
+        'start': int(args[3]), 'end': int(args[4]),
+        'user_id': message.from_user.id,
+    }
+
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("📷 单个缩略图 + 合并评论区",
+            callback_data=f"fwmulti_{task_key}_single")],
+        [InlineKeyboardButton("📷📷 多个缩略图(相册) + 评论区",
+            callback_data=f"fwmulti_{task_key}_multi")],
+    ])
+    await message.reply("请选择转发模式：", reply_markup=keyboard)
+
+async def forward_album_handler(client: pyrogram.Client, message: pyrogram.types.Message):
+    """多视频合并为媒体组"""
+    return await forward_message_impl(client, message, False, album_mode=True)
+
+async def forward_multi_callback(client: pyrogram.Client, callback_query: pyrogram.types.CallbackQuery):
+    """处理 /forward_multi 弹窗的选择结果"""
+    data = callback_query.data
+    if data.endswith("_single"):
+        mode = "single"
+        task_key = data[len("fwmulti_"):-len("_single")]
+    else:
+        mode = "multi"
+        task_key = data[len("fwmulti_"):-len("_multi")]
+
+    params = _bot.pending_forward_multi.pop(task_key, None)
+    if not params:
+        await callback_query.answer("已过期，请重新发送命令", show_alert=True)
+        return
+
+    await callback_query.message.edit_text(f"开始处理 (mode={mode})...")
+
+    class FakeMsg:
+        pass
+    fake = FakeMsg()
+    fake.from_user = FakeMsg()
+    fake.from_user.id = params['user_id']
+    fake.chat = FakeMsg()
+    fake.chat.id = params['user_id']
+    fake.text = f"/forward_multi {params['src']} {params['dst']} {params['start']} {params['end']}"
+    fake.id = callback_query.message.id
+
+    single_thumb = (mode == "single")
+    await forward_message_impl(client, fake, False, multi_mode=True, multi_single_thumb=single_thumb)
 
 async def forward_messages(client: pyrogram.Client, message: pyrogram.types.Message):
     """

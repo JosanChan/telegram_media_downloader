@@ -134,6 +134,9 @@ class TaskNode:
         task_type: TaskType = TaskType.Download,
         task_id: int = 0,
         topic_id: int = 0,
+        forward_multi_mode: bool = False,
+        forward_album_mode: bool = False,
+        forward_multi_single_thumb: bool = True,
         forward_video_screenshot: bool = False,
     ):
         self.chat_id = chat_id
@@ -164,6 +167,11 @@ class TaskNode:
         self.failed_forward_task: int = 0
         self.skip_forward_task: int = 0
         self.is_running: bool = False
+        self.forward_multi_mode = forward_multi_mode
+        self.forward_album_mode = forward_album_mode
+        self.forward_multi_single_thumb = forward_multi_single_thumb
+        self.forward_multi_buffer = []
+        self.forward_multi_captions = []
         self.forward_video_screenshot = forward_video_screenshot
         self.client = None
         self.upload_success_count: int = 0

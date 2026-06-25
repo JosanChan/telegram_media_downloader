@@ -81,6 +81,16 @@ translations = {
         "Переслать видео со скриншотом, введите /forward_screenshot",
         "Переслати відео зі скріншотом, введіть /forward_screenshot",
     ],
+    "Multi video screenshot forward": [
+        "多视频截图转发，使用方法直接输入/forward_multi查看",
+        "Переслать несколько видео со скриншотом, введите /forward_multi",
+        "Переслати кілька відео зі скріншотом, введіть /forward_multi",
+    ],
+    "Merge multiple videos into album": [
+        "合并多视频为媒体组，使用方法直接输入/forward_album查看",
+        "Объединить видео в альбом, введите /forward_album",
+        "Об'єднати відео в альбом, введіть /forward_album",
+    ],
     "Listen forward, use the method to directly enter /listen_forward to view": [
         "监控转发，使用方法直接输入/listen_forward查看",
         "Слушать пересылку, введите /listen_forward для просмотра",
