@@ -1544,12 +1544,12 @@ async def _flush_album_mode(node, items):
                     node.stat_forward(ForwardStatus.SuccessForward)
                     await report_bot_status(node.bot, node, immediate_reply=True)
                 except asyncio.TimeoutError:
-                    logger.warning("Download timeout for msg %s, skipping", msg.id)
+                    logger.warning(f"Download timeout for msg {msg.id}, skipping")
                     node.stat_forward(ForwardStatus.FailedForward)
                     await report_bot_status(node.bot, node, immediate_reply=True)
                     continue
                 except Exception as e:
-                    logger.error("Download failed for msg %s: %s", msg.id, e)
+                    logger.error(f"Download failed for msg {msg.id}: {e}")
                     node.stat_forward(ForwardStatus.FailedForward)
                     await report_bot_status(node.bot, node, immediate_reply=True)
                     continue
@@ -1580,12 +1580,12 @@ async def _flush_album_mode(node, items):
                     node.stat_forward(ForwardStatus.SuccessForward)
                     await report_bot_status(node.bot, node, immediate_reply=True)
                 except asyncio.TimeoutError:
-                    logger.warning("Download timeout for msg %s, skipping", msg.id)
+                    logger.warning(f"Download timeout for msg {msg.id}, skipping")
                     node.stat_forward(ForwardStatus.FailedForward)
                     await report_bot_status(node.bot, node, immediate_reply=True)
                     continue
                 except Exception as e:
-                    logger.error("Download failed for msg %s: %s", msg.id, e)
+                    logger.error(f"Download failed for msg {msg.id}: {e}")
                     node.stat_forward(ForwardStatus.FailedForward)
                     await report_bot_status(node.bot, node, immediate_reply=True)
                     continue
