@@ -1229,8 +1229,8 @@ async def update_upload_stat(
             percentage="", speed="", eta="")
     cds = node.cloud_drive_upload_stat_dict[message_id]
     total_sz = max(total_size, 1)
-    cds.transferred = f"{upload_size/1048576:.1f} MB"
-    cds.total = f"{total_sz/1048576:.1f} MB"
+    cds.transferred = str(upload_size)
+    cds.total = str(total_sz)
     cds.percentage = f"{upload_size/total_sz*100:.1f}"
     cds.speed = f"{max(upload_stat.upload_speed, 0)/1048576:.1f} MB/s"
     # Periodic UI refresh (every ~2s)
@@ -1518,6 +1518,8 @@ async def _flush_album_mode(client, node, items):
     media_items = [m for m in items if m.video or m.photo or m.document]
     text_items = [m for m in items if m not in media_items]
     temp_files = []
+    node.total_forward_task = len(items)
+    node.total_forward_task = len(items)
 
     try:
         for msg in text_items:

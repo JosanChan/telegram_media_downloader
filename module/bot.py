@@ -978,7 +978,8 @@ async def forward_message_impl(
                     node.forward_multi_buffer.append(item)
                     if item.caption:
                         node.forward_multi_captions.append(item.caption)
-                    node.stat_forward(ForwardStatus.SuccessForward)
+                    if not node.forward_album_mode:
+                        node.stat_forward(ForwardStatus.SuccessForward)
                     continue
 
                 await forward_normal_content(client, node, item)
