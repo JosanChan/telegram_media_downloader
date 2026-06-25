@@ -921,7 +921,7 @@ async def _report_bot_status(
                 temp_file_name = truncate_filename(
                     os.path.basename(value["file_name"]), 10
                 )
-                progress = int(value["down_byte"] / value["total_size"] * 100)
+                progress = int(value["down_byte"] / max(value["total_size"], 1) * 100)
                 download_result_str += (
                     f" ├─ 🆔 {_t('Message ID')}: {idx}\n"
                     f" │   ├─ 📁 : {temp_file_name}\n"
@@ -942,7 +942,7 @@ async def _report_bot_status(
                 continue
 
             temp_file_name = truncate_filename(os.path.basename(value.file_name), 10)
-            progress = int(value.upload_size / value.total_size * 100)
+            progress = int(value.upload_size / max(value.total_size, 1) * 100)
             upload_result_str += (
                 f" ├─ 🆔 {_t('Message ID')}: {idx}\n"
                 f" │   ├─ 📁 : {temp_file_name}\n"
