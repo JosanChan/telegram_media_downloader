@@ -1508,26 +1508,55 @@ async def _flush_album_mode(client, node, items):
             for j, msg in enumerate(batch):
                 cap = combined if j == 0 else ""
                 if msg.video:
-                    path = await client.download_media(msg.video)
-                    temp_files.append(str(path))
-                    media_list.append(
-                        pyrogram.types.InputMediaVideo(
-                            media=str(path), caption=cap))
+                    try:
+                        fresh = await client.get_messages(node.chat_id, msg.id)
+                        if fresh and fresh.video:
+                            msg = fresh
+                    except Exception:
+                        pass
+                    try:
+                        path = await asyncio.wait_for(
+                            client.download_media(msg.video), timeout=120)
+                        temp_files.append(str(path))
+                        media_list.append(
+                            pyrogram.types.InputMediaVideo(
+                                media=str(path), caption=cap))
+                    except asyncio.TimeoutError:
+                        logger.warning(f"Download timeout for msg {msg.id}, skipping")
+                        continue
+                    except Exception as e:
+                        logger.error(f"Download failed for msg {msg.id}: {e}")
+                        continue
                 elif msg.photo:
                     media_list.append(
                         pyrogram.types.InputMediaPhoto(
                             media=msg.photo.file_id,
                             caption=cap if j == 0 else ""))
                 elif msg.document:
-                    path = await client.download_media(msg.document)
-                    temp_files.append(str(path))
-                    media_list.append(
-                        pyrogram.types.InputMediaDocument(
-                            media=str(path), caption=cap))
+                    try:
+                        fresh = await client.get_messages(node.chat_id, msg.id)
+                        if fresh and fresh.document:
+                            msg = fresh
+                    except Exception:
+                        pass
+                    try:
+                        path = await asyncio.wait_for(
+                            client.download_media(msg.document), timeout=120)
+                        temp_files.append(str(path))
+                        media_list.append(
+                            pyrogram.types.InputMediaDocument(
+                                media=str(path), caption=cap))
+                    except asyncio.TimeoutError:
+                        logger.warning(f"Download timeout for msg {msg.id}, skipping")
+                        continue
+                    except Exception as e:
+                        logger.error(f"Download failed for msg {msg.id}: {e}")
+                        continue
 
-            await node.upload_user.send_media_group(
-                node.upload_telegram_chat_id, media_list,
-                message_thread_id=node.topic_id)
+            if media_list:
+                await node.upload_user.send_media_group(
+                    node.upload_telegram_chat_id, media_list,
+                    message_thread_id=node.topic_id)
     finally:
         for f in temp_files:
             try:
