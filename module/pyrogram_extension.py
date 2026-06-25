@@ -876,8 +876,10 @@ async def _report_bot_status(
     Returns:
         None
     """
-    logger.warning("[DEBUG] report_bot_status: reply_id=" + str(node.reply_message_id) + " bot=" + str(node.bot))
+    logger.warning("[DEBUG] SKIP: reply_id=" + str(node.reply_message_id) + " bot=" + str(bool(node.bot)))
+    logger.warning(f"[DEBUG] SKIP report_bot_status: reply_id={node.reply_message_id}, bot={node.bot}")
     if not node.reply_message_id or not node.bot:
+        logger.warning(f"[SKIP] report_bot_status: reply_id={node.reply_message_id}, bot={bool(node.bot)}")
         return
 
     if immediate_reply or node.can_reply():
@@ -1487,7 +1489,7 @@ async def _flush_multi_thumb(client, app, node, items):
 async def _flush_album_mode(client, node, items):
     """Mode B: 合并媒体项为媒体组(<=10/组)，文字单独转发"""
     import pyrogram
-    await report_bot_status(node.bot, node)
+    await report_bot_status(node.bot, node, immediate_reply=True)
     captions = [c for c in node.forward_multi_captions if c]
     combined = "\n---\n".join(captions) if captions else ""
     if captions:
@@ -1532,16 +1534,16 @@ async def _flush_album_mode(client, node, items):
                                 duration=msg.video.duration,
                                 supports_streaming=True))
                         node.stat_forward(ForwardStatus.SuccessForward)
-                        await report_bot_status(node.bot, node)
+                        await report_bot_status(node.bot, node, immediate_reply=True)
                     except asyncio.TimeoutError:
                         logger.warning(f"Download timeout for msg {msg.id}, skipping")
                         node.stat_forward(ForwardStatus.FailedForward)
-                        await report_bot_status(node.bot, node)
+                        await report_bot_status(node.bot, node, immediate_reply=True)
                         continue
                     except Exception as e:
                         logger.error(f"Download failed for msg {msg.id}: {e}")
                         node.stat_forward(ForwardStatus.FailedForward)
-                        await report_bot_status(node.bot, node)
+                        await report_bot_status(node.bot, node, immediate_reply=True)
                         continue
                 elif msg.photo:
                     media_list.append(
@@ -1569,16 +1571,16 @@ async def _flush_album_mode(client, node, items):
                                 media=str(path), caption=cap,
                                 attributes=msg.document.attributes))
                         node.stat_forward(ForwardStatus.SuccessForward)
-                        await report_bot_status(node.bot, node)
+                        await report_bot_status(node.bot, node, immediate_reply=True)
                     except asyncio.TimeoutError:
                         logger.warning(f"Download timeout for msg {msg.id}, skipping")
                         node.stat_forward(ForwardStatus.FailedForward)
-                        await report_bot_status(node.bot, node)
+                        await report_bot_status(node.bot, node, immediate_reply=True)
                         continue
                     except Exception as e:
                         logger.error(f"Download failed for msg {msg.id}: {e}")
                         node.stat_forward(ForwardStatus.FailedForward)
-                        await report_bot_status(node.bot, node)
+                        await report_bot_status(node.bot, node, immediate_reply=True)
                         continue
 
             if media_list:
