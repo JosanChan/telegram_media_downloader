@@ -977,6 +977,7 @@ async def forward_message_impl(
                     node.forward_multi_buffer.append(item)
                     if item.caption:
                         node.forward_multi_captions.append(item.caption)
+                    node.stat_forward(ForwardStatus.SuccessForward)
                     continue
 
                 await forward_normal_content(client, node, item)
@@ -996,7 +997,7 @@ async def forward_message_impl(
         finally:
             if node.forward_multi_buffer and (node.forward_multi_mode or node.forward_album_mode):
                 from module.pyrogram_extension import finalize_forward_multi
-                await finalize_forward_multi(client, _bot.app, node)
+                await finalize_forward_multi(_bot.client, _bot.app, node)
 
             await report_bot_status(client, node, immediate_reply=True)
 
