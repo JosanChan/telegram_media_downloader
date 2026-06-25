@@ -603,6 +603,7 @@ async def direct_download(
 
     node.client = client
 
+    node.upload_user = _bot.client
     _bot.add_task_node(node)
 
     await _bot.add_download_task(
@@ -996,13 +997,15 @@ async def forward_message_impl(
             )
         finally:
             if node.forward_multi_buffer and (node.forward_multi_mode or node.forward_album_mode):
-                from module.pyrogram_extension import finalize_forward_multi
-                await finalize_forward_multi(_bot.client, _bot.app, node)
+                try:
+                    from module.pyrogram_extension import finalize_forward_multi
+                    await finalize_forward_multi(_bot.client, _bot.app, node)
+                except Exception as e:
+                    logger.error(f"finalize_forward_multi failed: {e}")
 
             await report_bot_status(client, node, immediate_reply=True)
 
             node.stop_transmission()
-    else:
         await forward_msg(node, offset_id)
 
 
