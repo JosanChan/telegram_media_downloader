@@ -876,6 +876,7 @@ async def _report_bot_status(
     Returns:
         None
     """
+    logger.warning("[DEBUG] report_bot_status: reply_id=" + str(node.reply_message_id) + " bot=" + str(node.bot))
     if not node.reply_message_id or not node.bot:
         return
 
