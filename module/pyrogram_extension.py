@@ -1405,7 +1405,7 @@ async def finalize_forward_multi(client, app, node):
         else:
             await _flush_multi_thumb(client, app, node, items)
     elif node.forward_album_mode:
-        await _flush_album_mode(node, items)
+        await _flush_album_mode(client, node, items)
 
 
 async def _flush_single_thumb(client, app, node, items):
