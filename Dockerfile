@@ -20,6 +20,7 @@ RUN apk add --no-cache rclone
 FROM python:3.11.9-alpine AS runtime
 
 WORKDIR /app
+RUN apk add --no-cache ffmpeg
 
 # Copy installed deps from build stage
 COPY --from=build /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
