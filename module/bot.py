@@ -872,8 +872,8 @@ async def get_forward_task_node(
         task_type=task_type,
         topic_id=topic_id,
         forward_video_screenshot=screenshot_mode,
-        multi_mode=multi_mode,
-        multi_single_thumb=multi_single_thumb,
+        forward_multi_mode=multi_mode,
+        forward_multi_single_thumb=multi_single_thumb,
         forward_album_mode=album_mode,
     )
 
@@ -952,8 +952,8 @@ async def forward_message_impl(
         download_filter,
         reply_comment,
         screenshot_mode=screenshot_mode,
-        multi_mode=multi_mode,
-        multi_single_thumb=multi_single_thumb,
+        forward_multi_mode=multi_mode,
+        forward_multi_single_thumb=multi_single_thumb,
         album_mode=album_mode,
     )
 
