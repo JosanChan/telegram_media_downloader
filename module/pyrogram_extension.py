@@ -1547,7 +1547,6 @@ async def _flush_album_mode(client, node, items):
                             media=msg.photo.file_id,
                             caption=cap if j == 0 else ""))
                     node.stat_forward(ForwardStatus.SuccessForward)
-                    await report_bot_status(node.bot, node)
                 elif msg.document:
                     try:
                         fresh = await client.get_messages(node.chat_id, msg.id)
