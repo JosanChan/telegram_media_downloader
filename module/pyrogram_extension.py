@@ -2,6 +2,7 @@
 
 import asyncio
 import os
+import subprocess
 import secrets
 import struct
 import time
@@ -1231,7 +1232,7 @@ async def update_upload_stat(
     total_sz = max(total_size, 1)
     cds.transferred = str(upload_size)
     cds.total = str(total_sz)
-    cds.percentage = f"{upload_size/total_sz*100:.1f}"
+    cds.percentage = f"{int(upload_size/total_sz*100)}%"
     cds.speed = f"{max(upload_stat.upload_speed, 0)/1048576:.1f} MB/s"
     # Periodic UI refresh (every ~2s)
     if not hasattr(node, "_rpt_tick"):
@@ -1519,7 +1520,6 @@ async def _flush_album_mode(client, node, items):
     text_items = [m for m in items if m not in media_items]
     temp_files = []
     node.total_forward_task = len(items)
-    node.total_forward_task = len(items)
 
     try:
         for msg in text_items:
@@ -1545,6 +1545,13 @@ async def _flush_album_mode(client, node, items):
                                 progress_args=(msg.id, os.path.basename(str(msg.video.file_id)),
                                     time.time(), node, client)),
                             timeout=300)
+                        if _needs_transcode(str(path)):
+                            logger.info("Transcoding msg %s to H.264...", msg.id)
+                            fixed = _transcode_video(str(path))
+                            if fixed:
+                                temp_files.append(fixed)
+                                path = fixed
+                                logger.info("Transcode msg %s complete", msg.id)
                         temp_files.append(str(path))
                         media_list.append(
                             pyrogram.types.InputMediaVideo(
@@ -1614,3 +1621,30 @@ async def _flush_album_mode(client, node, items):
             except Exception:
                 pass
 
+
+def _needs_transcode(video_path):
+    """Detect if video needs H.264 transcoding via ffprobe"""
+    try:
+        r = subprocess.run(
+            ["ffprobe", "-v", "error", "-select_streams", "v:0",
+             "-show_entries", "stream=codec_name",
+             "-of", "default=noprint_wrappers=1:nokey=1", video_path],
+            capture_output=True, text=True, timeout=10)
+        return r.stdout.strip().lower() not in ("h264",)
+    except Exception:
+        return True
+
+
+def _transcode_video(video_path):
+    """Transcode video to H.264 + AAC via ffmpeg"""
+    out = video_path + "_h264.mp4"
+    try:
+        subprocess.run(
+            ["ffmpeg", "-i", video_path, "-c:v", "libx264",
+             "-c:a", "aac", "-movflags", "+faststart", out, "-y"],
+            capture_output=True, text=True, timeout=600)
+        if os.path.exists(out) and os.path.getsize(out) > 0:
+            return out
+    except Exception:
+        pass
+    return None
