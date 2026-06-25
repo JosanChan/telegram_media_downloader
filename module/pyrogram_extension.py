@@ -1494,7 +1494,7 @@ async def _flush_multi_thumb(client, app, node, items):
                 message_thread_id=node.topic_id, caption="")
 
 
-async def _flush_album_mode(node, items):
+async def _flush_album_mode(client, node, items):
     """Mode B: 合并媒体项为媒体组(<=10/组)，文字单独转发"""
     import pyrogram
     captions = [c for c in node.forward_multi_captions if c]
