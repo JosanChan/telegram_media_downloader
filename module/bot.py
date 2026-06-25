@@ -2,6 +2,7 @@
 
 import asyncio
 import os
+import time
 from datetime import datetime
 from typing import Callable, List, Union
 
@@ -791,6 +792,7 @@ async def get_forward_task_node(
     screenshot_mode: bool = False,
     multi_mode: bool = False,
     multi_single_thumb: bool = True,
+    album_mode: bool = False,
 ):
     """Get task node"""
     limit: int = 0
@@ -870,6 +872,9 @@ async def get_forward_task_node(
         task_type=task_type,
         topic_id=topic_id,
         forward_video_screenshot=screenshot_mode,
+        multi_mode=multi_mode,
+        multi_single_thumb=multi_single_thumb,
+        forward_album_mode=album_mode,
     )
 
     if target_msg_id and reply_comment:
@@ -902,6 +907,7 @@ async def forward_message_impl(
     screenshot_mode: bool = False,
     multi_mode: bool = False,
     multi_single_thumb: bool = True,
+    album_mode: bool = False,
 ):
     """
     Forward message
@@ -948,6 +954,7 @@ async def forward_message_impl(
         screenshot_mode=screenshot_mode,
         multi_mode=multi_mode,
         multi_single_thumb=multi_single_thumb,
+        album_mode=album_mode,
     )
 
     if not node:
