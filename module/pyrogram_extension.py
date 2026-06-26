@@ -758,13 +758,11 @@ async def proc_cache_forward(
 
     reply_to_message_id = None
     message_thread_id = node.topic_id
-    business_connection_id = None
     upload_telegram_chat_id = node.upload_telegram_chat_id
     if node.reply_to_message:
         if node.reply_to_message.chat.type != pyrogram.enums.ChatType.PRIVATE:
             reply_to_message_id = node.reply_to_message.id
         message_thread_id = node.reply_to_message.message_thread_id
-        business_connection_id = node.reply_to_message.business_connection_id
         upload_telegram_chat_id = node.reply_to_message.chat.id
     if not await send_media_group_v2(
         client,
@@ -772,7 +770,6 @@ async def proc_cache_forward(
         multi_media,
         message_thread_id=message_thread_id,
         reply_to_message_id=reply_to_message_id,
-        business_connection_id=business_connection_id,
     ):
         forward_status = ForwardStatus.FailedForward
 
