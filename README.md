@@ -1,292 +1,176 @@
+# Telegram Media Downloader — Josan Fork
 
-<h1 align="center">Telegram Media Downloader</h1>
+> 本项目 Fork 自 [tangyoha/telegram_media_downloader](https://github.com/tangyoha/telegram_media_downloader)。
+>
+> 原项目包含完整的下载、转发、过滤、Web UI、Docker 部署等功能说明，**更多基础功能详见原项目文档**。
+>
+> 本文档仅记录本 Fork 新增 / 修改的内容。
 
-<p align="center">
-<a href="https://deepwiki.com/tangyoha/telegram_media_downloader"><img alt="DeepWiki" src="https://img.shields.io/badge/DeepWiki-Documentation-blue"></a>
-<a href="https://github.com/tangyoha/telegram_media_downloader/actions"><img alt="Unittest" src="https://github.com/tangyoha/telegram_media_downloader/workflows/Unittest/badge.svg"></a>
-<a href="https://codecov.io/gh/tangyoha/telegram_media_downloader"><img alt="Coverage Status" src="https://codecov.io/gh/tangyoha/telegram_media_downloader/branch/master/graph/badge.svg"></a>
-<a href="https://github.com/tangyoha/telegram_media_downloader/blob/master/LICENSE"><img alt="License: MIT" src="https://black.readthedocs.io/en/stable/_static/license.svg"></a>
-<a href="https://github.com/python/black"><img alt="Code style: black" src="https://img.shields.io/badge/code%20style-black-000000.svg"></a>
-<a href="https://github.com/tangyoha/telegram_media_downloader/releases">
-<img alt="Code style: black" src="https://img.shields.io/github/v/release/tangyoha/telegram_media_downloader?display_name=tag"></a>
-</p>
+---
 
-<h3 align="center">
-  <a href="./README_CN.md">中文</a><span> · </span>
-  <a href="https://github.com/tangyoha/telegram_media_downloader/discussions/categories/ideas">Feature request</a>
-  <span> · </span>
-  <a href="https://github.com/tangyoha/telegram_media_downloader/issues">Report a bug</a>
-  <span> · </span>
-  Support: <a href="https://github.com/tangyoha/telegram_media_downloader/discussions">Discussions</a>
-  <span> & </span>
-  <a href="https://t.me/TeegramMediaDownload">Telegram Community</a>
-</h3>
+## 新增指令说明
 
-## Overview
-> Support two default running
+本 Fork 在原项目基础上新增了 4 条自定义 Bot 指令，均通过 Bot 发送，格式统一为：
 
-* The robot is running, and the command `download` or `forward` is issued from the robot
-
-* Download as a one-time download tool
-
-### UI
-
-#### Web page
-
-> After running, open a browser and visit `localhost:5000`
-> If it is a remote machine, you need to configure web_host: 0.0.0.0
-
-
-<img alt="Code style: black" style="width:100%; high:60%;" src="./screenshot/web_ui.gif"/>
-
-### Robot
-
-> Need to configure bot_token, please refer to [Documentation](https://github.com/tangyoha/telegram_media_downloader/wiki/How-to-Download-Using-Robots)
-
-<img alt="Code style: black" style="width:60%; high:30%; " src="./screenshot/bot.gif"/>
-
-### Support
-
-| Category             | Support                                          |
-| -------------------- | ------------------------------------------------ |
-| Language             | `Python 3.7` and above                           |
-| Download media types | audio, document, photo, video, video_note, voice |
-
-### Version release plan
-
-* [v2.2.0](https://github.com/tangyoha/telegram_media_downloader/issues/2)
-
-## Installation
-
-For *nix os distributions with `make` availability
-
-```sh
-git clone https://github.com/tangyoha/telegram_media_downloader.git
-cd telegram_media_downloader
-make install
+```
+/指令名 源频道链接 目标频道链接 起始消息ID 结束消息ID [过滤条件]
 ```
 
-For Windows which doesn't have `make` inbuilt
+---
 
-```sh
-git clone https://github.com/tangyoha/telegram_media_downloader.git
-cd telegram_media_downloader
-pip3 install -r requirements.txt
+### 1. `/forward_screenshot` — 截图转发
+
+**功能**
+
+将源频道的视频消息以"封面图发主帖、视频发评论区"的形式转发到目标频道，模拟频道常见的缩略图展示风格。
+
+**效果**
+
+- 目标频道主帖：视频封面图（thumbnail）+ 原标题 / 文案
+- 目标频道讨论组（评论区）：原始视频文件
+
+**适用场景**
+
+源频道是普通视频消息，希望在目标频道以"图片预览 + 评论区视频"的形式展示。
+
+**使用方法**
+
+```
+/forward_screenshot https://t.me/源频道 https://t.me/目标频道 起始ID 结束ID
 ```
 
-## Docker
-> For more detailed installation tutorial, please check the wiki
+**示例**
 
-Make sure you have **docker** and **docker-compose** installed
-```sh
-docker pull tangyoha/telegram_media_downloader:latest
-mkdir -p ~/app && mkdir -p ~/app/log/ && cd ~/app
-wget https://raw.githubusercontent.com/tangyoha/telegram_media_downloader/master/docker-compose.yaml -O docker-compose.yaml
-wget https://raw.githubusercontent.com/tangyoha/telegram_media_downloader/master/config.yaml -O config.yaml
-wget https://raw.githubusercontent.com/tangyoha/telegram_media_downloader/master/data.yaml -O data.yaml
-# vi config.yaml and docker-compose.yaml
-vi config.yaml
-
-# The first time you need to start the foreground
-# enter your phone number and code, then exit(ctrl + c)
-docker-compose run --rm telegram_media_downloader
-
-# After performing the above operations, all subsequent startups will start in the background
-docker-compose up -d
-
-# Upgrade
-docker pull tangyoha/telegram_media_downloader:latest
-cd ~/app
-docker-compose down
-docker-compose up -d
+```
+/forward_screenshot https://t.me/src_channel https://t.me/dst_channel 100 200
 ```
 
-## Upgrade installation
+> 注意：目标频道必须开启讨论组（linked discussion group），否则视频无处投放。
 
-```sh
-cd telegram_media_downloader
-pip3 install -r requirements.txt
+---
+
+### 2. `/forward_multi` — 多视频截图批量转发
+
+**功能**
+
+批量将多条视频消息以截图模式转发，支持两种子模式，通过弹出的内联按钮选择：
+
+| 模式 | 说明 |
+|------|------|
+| **单图模式（Single）** | 每条视频单独生成一个封面图帖子 + 评论区视频 |
+| **多图模式（Multi）** | 将多条视频的封面图合并为一个媒体组帖子，视频统一发到评论区 |
+
+**使用方法**
+
+```
+/forward_multi https://t.me/源频道 https://t.me/目标频道 起始ID 结束ID
 ```
 
-## Configuration
+发送命令后，Bot 会弹出模式选择按钮，点击选择即可开始处理。
 
-All the configurations are  passed to the Telegram Media Downloader via `config.yaml` file.
+**示例**
 
-**Getting your API Keys:**
-The very first step requires you to obtain a valid Telegram API key (API id/hash pair):
-
-1. Visit  [https://my.telegram.org/apps](https://my.telegram.org/apps)  and log in with your Telegram Account.
-2. Fill out the form to register a new Telegram application.
-3. Done! The API key consists of two parts:  **api_id**  and  **api_hash**.
-
-**Getting chat id:**
-
-**1. Using web telegram:**
-
-1. Open <https://web.telegram.org/?legacy=1#/im>
-
-2. Now go to the chat/channel and you will see the URL as something like
-   - `https://web.telegram.org/?legacy=1#/im?p=u853521067_2449618633394` here `853521067` is the chat id.
-   - `https://web.telegram.org/?legacy=1#/im?p=@somename` here `somename` is the chat id.
-   - `https://web.telegram.org/?legacy=1#/im?p=s1301254321_6925449697188775560` here take `1301254321` and add `-100` to the start of the id => `-1001301254321`.
-   - `https://web.telegram.org/?legacy=1#/im?p=c1301254321_6925449697188775560` here take `1301254321` and add `-100` to the start of the id => `-1001301254321`.
-
-**2. Using bot:**
-
-1. Use [@username_to_id_bot](https://t.me/username_to_id_bot) to get the chat_id of
-    - almost any telegram user: send username to the bot or just forward their message to the bot
-    - any chat: send chat username or copy and send its joinchat link to the bot
-    - public or private channel: same as chats, just copy and send to the bot
-    - id of any telegram bot
-
-### config.yaml
-
-```yaml
-api_hash: your_api_hash
-api_id: your_api_id
-chat:
-- chat_id: telegram_chat_id
-  last_read_message_id: 0
-  download_filter: message_date >= 2022-12-01 00:00:00 and message_date <= 2023-01-17 00:00:00
-- chat_id: telegram_chat_id_2
-  last_read_message_id: 0
-# note we remove ids_to_retry to data.yaml
-ids_to_retry: []
-media_types:
-- audio
-- document
-- photo
-- video
-- voice
-- animation #gif
-file_formats:
-  audio:
-  - all
-  document:
-  - pdf
-  - epub
-  video:
-  - mp4
-save_path: D:\telegram_media_downloader
-file_path_prefix:
-- chat_title
-- media_datetime
-upload_drive:
-  # required
-  enable_upload_file: true
-  # required
-  remote_dir: drive:/telegram
-  # required
-  upload_adapter: rclone
-  # option,when config upload_adapter rclone then this config are required
-  rclone_path: D:\rclone\rclone.exe
-  # option
-  before_upload_file_zip: True
-  # option
-  after_upload_file_delete: True
-hide_file_name: true
-file_name_prefix:
-- message_id
-- file_name
-file_name_prefix_split: ' - '
-max_download_task: 5
-web_host: 127.0.0.1
-web_port: 5000
-language: EN
-web_login_secret: 123
-allowed_user_ids:
-- 'me'
-date_format: '%Y_%m'
-enable_download_txt: false
+```
+/forward_multi https://t.me/src_channel https://t.me/dst_channel 100 200
 ```
 
-- **api_hash**  - The api_hash you got from telegram apps
-- **api_id** - The api_id you got from telegram apps
-- **bot_token** - Your bot token
-- **chat** - Chat list
-  - `chat_id` -  The id of the chat/channel you want to download media. Which you get from the above-mentioned steps.
-  - `download_filter` - Download filter, see [How to use Filter](https://github.com/tangyoha/telegram_media_downloader/wiki/How-to-use-Filter)
-  - `last_read_message_id` - If it is the first time you are going to read the channel let it be `0` or if you have already used this script to download media it will have some numbers which are auto-updated after the scripts successful execution. Don't change it.
-  - `ids_to_retry` - `Leave it as it is.` This is used by the downloader script to keep track of all skipped downloads so that it can be downloaded during the next execution of the script.
-- **media_types** - Type of media to download, you can update which type of media you want to download it can be one or any of the available types.
-- **file_formats** - File types to download for supported media types which are `audio`, `document` and `video`. Default format is `all`, downloads all files.
-- **save_path** - The root directory where you want to store downloaded files.
-- **file_path_prefix** - Store file subfolders, the order of the list is not fixed, can be randomly combined.
-  - `chat_title`      - Channel or group title, it will be chat id if not exist title.
-  - `media_datetime`  - Media date.
-  - `media_type`      - Media type, also see `media_types`.
-- **upload_drive** - You can upload file to cloud drive.
-  - `enable_upload_file` - Enable upload file, default `false`.
-  - `remote_dir` - Where you upload, like `drive_id/drive_name`.
-  - `upload_adapter` - Upload file adapter, which can be `rclone`, `aligo`. If it is `rclone`, it supports all `rclone` servers that support uploading. If it is `aligo`, it supports uploading `Ali cloud disk`.
-  - `rclone_path` - RClone exe path, see [How to use rclone](https://github.com/tangyoha/telegram_media_downloader/wiki/Rclone)
-  - `before_upload_file_zip` - Zip file before upload, default `false`.
-  - `after_upload_file_delete` - Delete file after upload success, default `false`.
-- **file_name_prefix** - Custom file name, use the same as **file_path_prefix**
-  - `message_id` - Message id
-  - `file_name` - File name (may be empty)
-  - `caption` - The title of the message (may be empty)
-- **file_name_prefix_split** - Custom file name prefix symbol, the default is `-`
-- **max_download_task** - The maximum number of task download tasks, the default is 5.
-- **hide_file_name** - Whether to hide the web interface file name, default `false`
-- **web_host** - Web host
-- **web_port** - Web port
-- **language** - Application language, the default is English (`EN`), optional `ZH`(Chinese),`RU`,`UA`
-- **web_login_secret** - Web page login password, if not configured, no login is required to access the web page
-- **log_level** - see `logging._nameToLevel`.
-- **forward_limit** - Limit the number of forwards per minute, the default is 33, please do not modify this parameter by default.
-- **allowed_user_ids** - Who is allowed to use the robot? The default login account can be used. Please add single quotes to the name with @.
-- **date_format** Support custom configuration of media_datetime format in file_path_prefix.see [python-datetime](https://docs.python.org/3/library/datetime.html)
-- **enable_download_txt** Enable download txt file, default `false`
+> 注意：不支持源频道开启了"转发限制"（protected content）的情况。
 
-## Execution
+---
 
-```sh
-python3 media_downloader.py
+### 3. `/forward_album` — 多视频合并媒体组转发
+
+**功能**
+
+将多条视频消息打包合并为一个 Telegram 媒体组（Album）发送到目标频道，所有视频作为一个帖子呈现。
+
+**效果**
+
+- 目标频道：一个包含多个视频的媒体组帖子（最多 10 个）
+- 保留原始视频文件和标题
+
+**适用场景**
+
+需要把多个相关视频合为一组发布，避免频道被大量单条帖子刷屏。
+
+**使用方法**
+
+```
+/forward_album https://t.me/源频道 https://t.me/目标频道 起始ID 结束ID
 ```
 
-All downloaded media will be stored at the root of `save_path`.
-The specific location reference is as follows:
+**示例**
 
-The complete directory of video download is: `save_path`/`chat_title`/`media_datetime`/`media_type`.
-The order of the list is not fixed and can be randomly combined.
-If the configuration is empty, all files are saved under `save_path`.
-
-## Proxy
-
-`socks4, socks5, http` proxies are supported in this project currently. To use it, add the following to the bottom of your `config.yaml` file
-
-```yaml
-proxy:
-  scheme: socks5
-  hostname: 127.0.0.1
-  port: 1234
-  username: your_username(delete the line if none)
-  password: your_password(delete the line if none)
+```
+/forward_album https://t.me/src_channel https://t.me/dst_channel 100 110
 ```
 
-If your proxy doesn’t require authorization you can omit username and password. Then the proxy will automatically be enabled.
+> 注意：不支持源频道开启了"转发限制"的情况。
 
-## Contributing
+---
 
-### Contributing Guidelines
+### 4. `/forward_clone` — 克隆频道（保留讨论区结构）
 
-Read through our [contributing guidelines](https://github.com/tangyoha/telegram_media_downloader/blob/master/CONTRIBUTING.md) to learn about our submission process, coding rules and more.
+**功能**
 
-### Want to Help?
+将源频道的帖子**连同其讨论区评论**一起复制到目标频道，完整还原原频道的内容结构。
 
-Want to file a bug, contribute some code, or improve documentation? Excellent! Read up on our guidelines for [contributing](https://github.com/tangyoha/telegram_media_downloader/blob/master/CONTRIBUTING.md).
+专为以下场景设计：源频道的帖子是"图片 / 封面图 + 评论区视频"结构，克隆后目标频道也保持同样的结构。
 
-### Code of Conduct
+**处理逻辑**
 
-Help us keep Telegram Media Downloader open and inclusive. Please read and follow our [Code of Conduct](https://github.com/tangyoha/telegram_media_downloader/blob/master/CODE_OF_CONDUCT.md).
+1. 逐条读取源频道指定范围内的帖子
+2. 将主帖（图片、视频、文字等）复制到目标频道
+3. 读取该帖在源频道讨论组中的所有评论
+4. 将这些评论复制到目标频道的讨论组，作为对应新帖的回复
 
+**效果**
 
-### Sponsor
+- 源频道：`[图片帖]` → 评论区：`[视频1]` `[视频2]`
+- 目标频道：`[图片帖（复制）]` → 评论区：`[视频1（复制）]` `[视频2（复制）]`
 
-[PayPal](https://paypal.me/tangyoha?country.x=C2&locale.x=zh_XC)
+**使用方法**
 
+```
+/forward_clone https://t.me/源频道 https://t.me/目标频道 起始ID 结束ID
+```
 
-## Star History
+**示例**
 
-[![Star History Chart](https://api.star-history.com/svg?repos=tangyoha/telegram_media_downloader&type=Date)](https://star-history.com/#tangyoha/telegram_media_downloader&Date)
+```
+/forward_clone https://t.me/src_channel https://t.me/dst_channel 100 200
+```
+
+**前提条件**
+
+- 源频道和目标频道都需要有已关联的讨论组（linked discussion group）
+- 源频道不能开启"转发限制"（protected content）
+- Bot 需要有目标频道及其讨论组的发送权限
+
+---
+
+## 通用说明
+
+### 消息 ID 获取方式
+
+在 Telegram Web（或桌面端）打开频道，鼠标悬停在帖子上，URL 末尾的数字即为消息 ID。
+
+### 过滤条件（可选参数）
+
+所有指令均支持在末尾添加过滤条件，语法与原项目 `/forward` 指令一致，例如：
+
+```
+/forward_clone https://t.me/src https://t.me/dst 1 500 message_date >= 2024-01-01
+```
+
+### 停止任务
+
+发送 `/stop` 可中断当前正在执行的任务。
+
+---
+
+## 原项目文档
+
+完整的安装、配置、Docker 部署、下载功能、过滤器语法等说明请参阅原项目：
+
+**[https://github.com/tangyoha/telegram_media_downloader](https://github.com/tangyoha/telegram_media_downloader)**
