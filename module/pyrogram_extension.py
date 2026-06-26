@@ -1398,6 +1398,17 @@ async def forward_messages(
 
 # === NEW: /forward_multi & /forward_album support ===
 
+
+async def _copy_item(node, item, chat_id, **kwargs):
+    """Copy a buffered message to target chat, tracking forward stats."""
+    try:
+        await item.copy(chat_id, **kwargs)
+        node.stat_forward(ForwardStatus.SuccessForward)
+    except Exception as e:
+        logger.warning(f"copy failed for msg {item.id}: {e}")
+        node.stat_forward(ForwardStatus.FailedForward)
+
+
 async def finalize_forward_multi(client, app, node):
     """总调度: 根据 node 配置分发到对应子模式"""
     items = node.forward_multi_buffer
@@ -1433,29 +1444,28 @@ async def _flush_single_thumb(client, app, node, items):
             node.upload_telegram_chat_id, caption,
             message_thread_id=node.topic_id)
 
-    async def _copy_with_refresh(item, chat_id, **kwargs):
-        try:
-            fresh = await client.get_messages(node.chat_id, item.id)
-            if fresh and not fresh.empty:
-                item = fresh
-        except Exception:
-            pass
-        await item.copy(chat_id, **kwargs)
-        node.stat_forward(ForwardStatus.SuccessForward)
-        await report_bot_status(node.bot, node, immediate_reply=True)
+    # Batch-refresh all file references in one call to avoid stale file_id errors
+    try:
+        refreshed = await client.get_messages(node.chat_id, [m.id for m in items])
+        if isinstance(refreshed, list):
+            items = [f if (f and not getattr(f, 'empty', False)) else o
+                     for f, o in zip(refreshed, items)]
+    except Exception:
+        pass
 
     try:
         disc = await client.get_discussion_message(
             node.upload_telegram_chat_id, photo_msg.id)
         for item in items:
-            await _copy_with_refresh(item, disc.chat.id,
+            await _copy_item(node, item, disc.chat.id,
                 reply_to_message_id=disc.id,
                 message_thread_id=node.topic_id, caption="")
     except Exception:
         for item in items:
-            await _copy_with_refresh(item, node.upload_telegram_chat_id,
+            await _copy_item(node, item, node.upload_telegram_chat_id,
                 reply_to_message_id=photo_msg.id,
                 message_thread_id=node.topic_id, caption="")
+    await report_bot_status(node.bot, node, immediate_reply=True)
 
 
 async def _flush_multi_thumb(client, app, node, items):
@@ -1495,29 +1505,28 @@ async def _flush_multi_thumb(client, app, node, items):
         except Exception:
             pass
 
-    async def _copy_with_refresh(item, chat_id, **kwargs):
-        try:
-            fresh = await client.get_messages(node.chat_id, item.id)
-            if fresh and not fresh.empty:
-                item = fresh
-        except Exception:
-            pass
-        await item.copy(chat_id, **kwargs)
-        node.stat_forward(ForwardStatus.SuccessForward)
-        await report_bot_status(node.bot, node, immediate_reply=True)
+    # Batch-refresh all file references in one call to avoid stale file_id errors
+    try:
+        refreshed = await client.get_messages(node.chat_id, [m.id for m in items])
+        if isinstance(refreshed, list):
+            items = [f if (f and not getattr(f, 'empty', False)) else o
+                     for f, o in zip(refreshed, items)]
+    except Exception:
+        pass
 
     try:
         disc = await client.get_discussion_message(
             node.upload_telegram_chat_id, photo_msg.id)
         for item in items:
-            await _copy_with_refresh(item, disc.chat.id,
+            await _copy_item(node, item, disc.chat.id,
                 reply_to_message_id=disc.id,
                 message_thread_id=node.topic_id, caption="")
     except Exception:
         for item in items:
-            await _copy_with_refresh(item, node.upload_telegram_chat_id,
+            await _copy_item(node, item, node.upload_telegram_chat_id,
                 reply_to_message_id=photo_msg.id,
                 message_thread_id=node.topic_id, caption="")
+    await report_bot_status(node.bot, node, immediate_reply=True)
 
 
 async def _flush_album_mode(client, node, items):

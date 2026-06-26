@@ -964,6 +964,8 @@ async def forward_message_impl(
     if not node:
         return
 
+    node.is_running = True
+
     # multi/album modes cannot handle protected-content channels (copy() will fail)
     if (node.forward_multi_mode or node.forward_album_mode) and node.has_protected_content:
         await client.edit_message_text(
@@ -973,8 +975,6 @@ async def forward_message_impl(
         )
         node.stop_transmission()
         return
-
-    node.is_running = True
 
     if not node.has_protected_content:
         try:
@@ -1027,9 +1027,10 @@ async def forward_message_impl(
             await report_bot_status(client, node, immediate_reply=True)
 
             node.stop_transmission()
-        # only run download_chat_task for normal forward/screenshot, not for
-        # multi/album (already finalized above) to avoid redundant re-iteration
-        if not node.forward_multi_mode and not node.forward_album_mode:
+        # only run download_chat_task for plain /forward — multi/album/screenshot
+        # are fully handled by their own paths and don't need a second iteration
+        if not (node.forward_multi_mode or node.forward_album_mode
+                or node.forward_video_screenshot):
             await forward_msg(node, offset_id)
 
 
