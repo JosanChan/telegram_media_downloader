@@ -964,6 +964,18 @@ async def forward_message_impl(
     if not node:
         return
 
+    # multi/album modes cannot handle protected-content channels (copy() will fail)
+    if (node.forward_multi_mode or node.forward_album_mode) and node.has_protected_content:
+        await client.edit_message_text(
+            node.from_user_id,
+            node.reply_message_id,
+            "❌ Multi/Album 模式不支持受保护内容的频道（转发限制已开启）",
+        )
+        node.stop_transmission()
+        return
+
+    node.is_running = True
+
     if not node.has_protected_content:
         try:
             async for item in get_chat_history_v2(  # type: ignore
@@ -975,10 +987,11 @@ async def forward_message_impl(
                 reverse=True,
             ):
                 if node.forward_multi_mode or node.forward_album_mode:
+                    if node.is_stop_transmission:
+                        break
                     node.forward_multi_buffer.append(item)
                     if item.caption:
                         node.forward_multi_captions.append(item.caption)
-                    node.stat_forward(ForwardStatus.SuccessForward)
                     continue
 
                 await forward_normal_content(client, node, item)
@@ -1002,11 +1015,22 @@ async def forward_message_impl(
                     await finalize_forward_multi(_bot.client, _bot.app, node)
                 except Exception as e:
                     logger.error(f"finalize_forward_multi failed: {e}")
+                    try:
+                        await client.edit_message_text(
+                            node.from_user_id,
+                            node.reply_message_id,
+                            f"❌ Forward multi/album failed: {e}",
+                        )
+                    except Exception:
+                        pass
 
             await report_bot_status(client, node, immediate_reply=True)
 
             node.stop_transmission()
-        await forward_msg(node, offset_id)
+        # only run download_chat_task for normal forward/screenshot, not for
+        # multi/album (already finalized above) to avoid redundant re-iteration
+        if not node.forward_multi_mode and not node.forward_album_mode:
+            await forward_msg(node, offset_id)
 
 
 async def forward_screenshot(client: pyrogram.Client, message: pyrogram.types.Message):
@@ -1062,6 +1086,7 @@ async def forward_multi_callback(client: pyrogram.Client, callback_query: pyrogr
         await callback_query.answer("已过期，请重新发送命令", show_alert=True)
         return
 
+    await callback_query.answer()
     await callback_query.message.edit_text(f"开始处理 (mode={mode})...")
 
     class FakeMsg:

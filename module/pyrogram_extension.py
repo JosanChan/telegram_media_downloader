@@ -1433,16 +1433,27 @@ async def _flush_single_thumb(client, app, node, items):
             node.upload_telegram_chat_id, caption,
             message_thread_id=node.topic_id)
 
+    async def _copy_with_refresh(item, chat_id, **kwargs):
+        try:
+            fresh = await client.get_messages(node.chat_id, item.id)
+            if fresh and not fresh.empty:
+                item = fresh
+        except Exception:
+            pass
+        await item.copy(chat_id, **kwargs)
+        node.stat_forward(ForwardStatus.SuccessForward)
+        await report_bot_status(node.bot, node, immediate_reply=True)
+
     try:
         disc = await client.get_discussion_message(
             node.upload_telegram_chat_id, photo_msg.id)
         for item in items:
-            await item.copy(disc.chat.id,
+            await _copy_with_refresh(item, disc.chat.id,
                 reply_to_message_id=disc.id,
                 message_thread_id=node.topic_id, caption="")
     except Exception:
         for item in items:
-            await item.copy(node.upload_telegram_chat_id,
+            await _copy_with_refresh(item, node.upload_telegram_chat_id,
                 reply_to_message_id=photo_msg.id,
                 message_thread_id=node.topic_id, caption="")
 
@@ -1450,7 +1461,7 @@ async def _flush_single_thumb(client, app, node, items):
 async def _flush_multi_thumb(client, app, node, items):
     """Mode A-多个: 媒体组缩略图相册帖 + 全部内容进评论区"""
     import pyrogram
-    await report_bot_status(client, node)
+    await report_bot_status(node.bot, node)
     thumb_files = []
     media_list = []
 
@@ -1484,16 +1495,27 @@ async def _flush_multi_thumb(client, app, node, items):
         except Exception:
             pass
 
+    async def _copy_with_refresh(item, chat_id, **kwargs):
+        try:
+            fresh = await client.get_messages(node.chat_id, item.id)
+            if fresh and not fresh.empty:
+                item = fresh
+        except Exception:
+            pass
+        await item.copy(chat_id, **kwargs)
+        node.stat_forward(ForwardStatus.SuccessForward)
+        await report_bot_status(node.bot, node, immediate_reply=True)
+
     try:
         disc = await client.get_discussion_message(
             node.upload_telegram_chat_id, photo_msg.id)
         for item in items:
-            await item.copy(disc.chat.id,
+            await _copy_with_refresh(item, disc.chat.id,
                 reply_to_message_id=disc.id,
                 message_thread_id=node.topic_id, caption="")
     except Exception:
         for item in items:
-            await item.copy(node.upload_telegram_chat_id,
+            await _copy_with_refresh(item, node.upload_telegram_chat_id,
                 reply_to_message_id=photo_msg.id,
                 message_thread_id=node.topic_id, caption="")
 
