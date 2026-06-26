@@ -1631,6 +1631,111 @@ async def _flush_album_mode(client, node, items):
                 node.upload_telegram_chat_id, media_list,
                 message_thread_id=node.topic_id)
 
+async def _get_thread_replies(client, group_id, thread_msg_id):
+    """Fetch all reply messages in a Telegram discussion thread via raw API."""
+    from pyrogram.raw import functions as raw_fn
+    try:
+        peer = await client.resolve_peer(group_id)
+        result = await client.invoke(
+            raw_fn.messages.GetReplies(
+                peer=peer,
+                msg_id=thread_msg_id,
+                offset_id=0,
+                offset_date=0,
+                add_offset=0,
+                limit=100,
+                max_id=0,
+                min_id=0,
+                hash=0,
+            )
+        )
+        if not getattr(result, "messages", None):
+            return []
+        msg_ids = [m.id for m in result.messages]
+        msgs = await client.get_messages(group_id, msg_ids)
+        if not isinstance(msgs, list):
+            msgs = [msgs]
+        return [m for m in msgs if m and not getattr(m, "empty", False)]
+    except Exception as e:
+        logger.warning(f"_get_thread_replies({group_id}, {thread_msg_id}): {e}")
+        return []
+
+
+async def forward_clone_impl(client, app, node):
+    """Clone channel: copy each post then copy its discussion-thread replies.
+
+    Reproduces the source structure — e.g. photo-post in channel +
+    video replies in the linked discussion group.
+    """
+    from module.get_chat_history_v2 import get_chat_history_v2
+
+    seen_media_groups: set = set()
+
+    async for post in get_chat_history_v2(
+        client,
+        node.chat_id,
+        limit=node.limit,
+        max_id=node.end_offset_id,
+        offset_id=node.start_offset_id,
+        reverse=True,
+    ):
+        if node.is_stop_transmission:
+            break
+
+        # For album/media-group posts only process the first message of each group
+        if post.media_group_id:
+            if post.media_group_id in seen_media_groups:
+                continue
+            seen_media_groups.add(post.media_group_id)
+
+        await app.forward_limit_call.wait(node)
+
+        # Refresh file reference before copying
+        try:
+            fresh = await client.get_messages(node.chat_id, post.id)
+            if fresh and not getattr(fresh, "empty", False):
+                post = fresh
+        except Exception:
+            pass
+
+        # Copy the main post to the destination channel
+        try:
+            dst_post = await post.copy(
+                node.upload_telegram_chat_id,
+                message_thread_id=node.topic_id,
+            )
+            node.stat_forward(ForwardStatus.SuccessForward)
+        except Exception as e:
+            logger.warning(f"clone: copy post {post.id} failed: {e}")
+            node.stat_forward(ForwardStatus.FailedForward)
+            await report_bot_status(node.bot, node)
+            continue
+
+        # Clone the discussion thread for this post (if any)
+        try:
+            src_disc = await client.get_discussion_message(node.chat_id, post.id)
+            dst_disc = await client.get_discussion_message(
+                node.upload_telegram_chat_id, dst_post.id
+            )
+            reply_msgs = await _get_thread_replies(client, src_disc.chat.id, src_disc.id)
+            for reply in reply_msgs:
+                await app.forward_limit_call.wait(node)
+                try:
+                    fresh_reply = await client.get_messages(src_disc.chat.id, reply.id)
+                    if fresh_reply and not getattr(fresh_reply, "empty", False):
+                        reply = fresh_reply
+                except Exception:
+                    pass
+                try:
+                    await reply.copy(dst_disc.chat.id, reply_to_message_id=dst_disc.id)
+                except Exception as e:
+                    logger.warning(f"clone: copy discussion reply {reply.id} failed: {e}")
+        except Exception:
+            pass  # no discussion linked, or dst channel has no linked group
+
+        await report_bot_status(node.bot, node)
+
+
 def _needs_transcode(video_path):
     try:
         r = subprocess.run(

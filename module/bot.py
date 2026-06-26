@@ -29,11 +29,11 @@ from module.get_chat_history_v2 import get_chat_history_v2
 from module.language import Language, _t
 from module.pyrogram_extension import (
     check_user_permission,
+    forward_clone_impl,
     parse_link,
     proc_cache_forward,
     report_bot_forward_status,
     report_bot_status,
-
     retry,
     set_meta_data,
     upload_telegram_chat_message,
@@ -181,6 +181,10 @@ class DownloadBot:
                 _t("Merge multiple videos into album"),
             ),
             types.BotCommand(
+                "forward_clone",
+                _t("Clone channel preserving discussion structure"),
+            ),
+            types.BotCommand(
                 "listen_forward",
                 _t(
                     "Listen forward, use the method to directly enter /listen_forward to view"
@@ -257,6 +261,13 @@ class DownloadBot:
             MessageHandler(
                 forward_album_handler,
                 filters=pyrogram.filters.command(["forward_album"])
+                & pyrogram.filters.user(self.allowed_user_ids),
+            )
+        )
+        self.bot.add_handler(
+            MessageHandler(
+                forward_clone_handler,
+                filters=pyrogram.filters.command(["forward_clone"])
                 & pyrogram.filters.user(self.allowed_user_ids),
             )
         )
@@ -1071,6 +1082,70 @@ async def forward_multi_handler(client: pyrogram.Client, message: pyrogram.types
 async def forward_album_handler(client: pyrogram.Client, message: pyrogram.types.Message):
     """多视频合并为媒体组"""
     return await forward_message_impl(client, message, False, album_mode=True)
+
+
+async def forward_clone_handler(client: pyrogram.Client, message: pyrogram.types.Message):
+    """克隆频道：原样复制帖子及讨论区评论（保留图片+评论区视频结构）"""
+    args = message.text.split(maxsplit=5)
+    if len(args) < 5:
+        await client.send_message(
+            message.from_user.id,
+            f"{_t('Invalid command format')}. "
+            "/forward_clone src_link dst_link start_id end_id",
+        )
+        return
+
+    try:
+        offset_id = int(args[3])
+        end_offset_id = int(args[4])
+    except Exception:
+        await client.send_message(
+            message.from_user.id, _t("Invalid command format")
+        )
+        return
+
+    download_filter = args[5] if len(args) > 5 else None
+
+    node = await get_forward_task_node(
+        client,
+        message,
+        TaskType.Forward,
+        args[1],
+        args[2],
+        offset_id,
+        end_offset_id,
+        download_filter,
+        reply_comment=False,
+    )
+    if not node:
+        return
+
+    node.is_running = True
+
+    if node.has_protected_content:
+        await client.edit_message_text(
+            node.from_user_id,
+            node.reply_message_id,
+            "❌ Clone 模式不支持受保护内容的频道（转发限制已开启）",
+        )
+        node.stop_transmission()
+        return
+
+    try:
+        await forward_clone_impl(_bot.client, _bot.app, node)
+    except Exception as e:
+        try:
+            await client.edit_message_text(
+                node.from_user_id,
+                node.reply_message_id,
+                f"❌ Clone failed: {e}",
+            )
+        except Exception:
+            pass
+    finally:
+        await report_bot_status(client, node, immediate_reply=True)
+        node.stop_transmission()
+
 
 async def forward_multi_callback(client: pyrogram.Client, callback_query: pyrogram.types.CallbackQuery):
     """处理 /forward_multi 弹窗的选择结果"""
