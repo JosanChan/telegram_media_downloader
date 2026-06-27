@@ -165,6 +165,7 @@ class TaskNode:
         self.total_forward_task: int = 0
         self.success_forward_task: int = 0
         self.failed_forward_task: int = 0
+        self.failed_forward_ids: list = []
         self.skip_forward_task: int = 0
         self.is_running: bool = False
         self.forward_multi_mode = forward_multi_mode

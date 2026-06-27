@@ -1493,7 +1493,10 @@ async def process_multi_group(client, app, node, group_msgs, single_thumb: bool)
     others = [m for m in group_msgs if not m.photo and not m.video]
 
     for msg in others:
-        await _copy_item(node, msg, node.upload_telegram_chat_id)
+        try:
+            await _copy_item(node, msg, node.upload_telegram_chat_id)
+        except Exception:
+            node.failed_forward_ids.append(msg.id)
 
     if not photos and not videos:
         return
@@ -1503,31 +1506,37 @@ async def process_multi_group(client, app, node, group_msgs, single_thumb: bool)
     if single_thumb:
         # 单缩略图：看第一个元素是图片还是视频
         first = group_msgs[0]
-        if first.photo:
-            photo_msg = await upload_client.send_photo(
-                node.upload_telegram_chat_id, first.photo.file_id,
-                caption=caption, message_thread_id=node.topic_id or None)
-        elif first.video:
-            thumb_path = None
-            if first.video.thumbs:
-                thumb_path = await download_thumbnail(client, app.temp_save_path, first)
-            if thumb_path:
-                try:
-                    photo_msg = await upload_client.send_photo(
-                        node.upload_telegram_chat_id, thumb_path,
-                        caption=caption, message_thread_id=node.topic_id or None)
-                finally:
+        try:
+            if first.photo:
+                photo_msg = await upload_client.send_photo(
+                    node.upload_telegram_chat_id, first.photo.file_id,
+                    caption=caption, message_thread_id=node.topic_id or None)
+            elif first.video:
+                thumb_path = None
+                if first.video.thumbs:
+                    thumb_path = await download_thumbnail(client, app.temp_save_path, first)
+                if thumb_path:
                     try:
-                        os.remove(thumb_path)
-                    except Exception:
-                        pass
+                        photo_msg = await upload_client.send_photo(
+                            node.upload_telegram_chat_id, thumb_path,
+                            caption=caption, message_thread_id=node.topic_id or None)
+                    finally:
+                        try:
+                            os.remove(thumb_path)
+                        except Exception:
+                            pass
+                else:
+                    photo_msg = await upload_client.send_message(
+                        node.upload_telegram_chat_id,
+                        caption or "📹 视频详见评论区👇",
+                        message_thread_id=node.topic_id or None)
             else:
-                photo_msg = await upload_client.send_message(
-                    node.upload_telegram_chat_id,
-                    caption or "📹 视频详见评论区👇",
-                    message_thread_id=node.topic_id or None)
-        else:
-            return
+                return
+        except Exception:
+            logger.exception(f"Failed to send main post for single_thumb group")
+            for m in group_msgs:
+                node.failed_forward_ids.append(m.id)
+            return  # no main post, can't continue
 
         # 全部图片+视频都进评论区
         all_media = photos + videos
@@ -1535,12 +1544,22 @@ async def process_multi_group(client, app, node, group_msgs, single_thumb: bool)
             disc = await client.get_discussion_message(
                 node.upload_telegram_chat_id, photo_msg.id)
             for msg in all_media:
-                await _copy_item(node, msg, disc.chat.id,
-                    reply_to_message_id=disc.id, caption="")
+                try:
+                    await _copy_item(node, msg, disc.chat.id,
+                        reply_to_message_id=disc.id, caption="")
+                except Exception:
+                    try:
+                        await _copy_item(node, msg, node.upload_telegram_chat_id,
+                            reply_to_message_id=photo_msg.id, caption="")
+                    except Exception:
+                        node.failed_forward_ids.append(msg.id)
         except Exception:
             for msg in all_media:
-                await _copy_item(node, msg, node.upload_telegram_chat_id,
-                    reply_to_message_id=photo_msg.id, caption="")
+                try:
+                    await _copy_item(node, msg, node.upload_telegram_chat_id,
+                        reply_to_message_id=photo_msg.id, caption="")
+                except Exception:
+                    node.failed_forward_ids.append(msg.id)
 
     else:
         # 多缩略图模式：
@@ -1576,20 +1595,27 @@ async def process_multi_group(client, app, node, group_msgs, single_thumb: bool)
 
             photo_msg = None
             try:
-                if not media_list:
-                    photo_msg = await upload_client.send_message(
-                        node.upload_telegram_chat_id,
-                        caption or "📹 视频详见评论区👇",
-                        message_thread_id=node.topic_id or None)
-                elif len(media_list) == 1:
-                    photo_msg = await upload_client.send_photo(
-                        node.upload_telegram_chat_id, media_list[0].media,
-                        caption=caption, message_thread_id=node.topic_id or None)
-                else:
-                    sent = await upload_client.send_media_group(
-                        node.upload_telegram_chat_id, media_list,
-                        message_thread_id=node.topic_id or None)
-                    photo_msg = sent[0] if sent else None
+                try:
+                    if not media_list:
+                        photo_msg = await upload_client.send_message(
+                            node.upload_telegram_chat_id,
+                            caption or "📹 视频详见评论区👇",
+                            message_thread_id=node.topic_id or None)
+                    elif len(media_list) == 1:
+                        photo_msg = await upload_client.send_photo(
+                            node.upload_telegram_chat_id, media_list[0].media,
+                            caption=caption, message_thread_id=node.topic_id or None)
+                    else:
+                        sent = await upload_client.send_media_group(
+                            node.upload_telegram_chat_id, media_list,
+                            message_thread_id=node.topic_id or None)
+                        photo_msg = sent[0] if sent else None
+                except Exception:
+                    logger.exception(
+                        f"Failed to send main post for pure video group")
+                    for v in videos:
+                        node.failed_forward_ids.append(v.id)
+                    photo_msg = None
             finally:
                 for msg in staging_msgs:
                     try:
@@ -1602,14 +1628,24 @@ async def process_multi_group(client, app, node, group_msgs, single_thumb: bool)
                     disc = await client.get_discussion_message(
                         node.upload_telegram_chat_id, photo_msg.id)
                     for video in videos:
-                        await _copy_item(node, video, disc.chat.id,
-                            reply_to_message_id=disc.id, caption="")
+                        try:
+                            await _copy_item(node, video, disc.chat.id,
+                                reply_to_message_id=disc.id, caption="")
+                        except Exception:
+                            try:
+                                await _copy_item(node, video, node.upload_telegram_chat_id,
+                                    reply_to_message_id=photo_msg.id, caption="")
+                            except Exception:
+                                node.failed_forward_ids.append(video.id)
                 except Exception:
                     for video in videos:
-                        await _copy_item(node, video, node.upload_telegram_chat_id,
-                            reply_to_message_id=photo_msg.id, caption="")
+                        try:
+                            await _copy_item(node, video, node.upload_telegram_chat_id,
+                                reply_to_message_id=photo_msg.id, caption="")
+                        except Exception:
+                            node.failed_forward_ids.append(video.id)
         else:
-            # 图片+视频组：仅图片相册 → 主帖；全部视频 → 评论区
+            # 图片+视频组：仅图片相册 → 主帖；全部图片+视频 → 评论区
             # 图片 file_id 是 PHOTO 类型，可直接用于 send_media_group，无需暂存
             media_list: list = []
             for photo in photos:
@@ -1617,59 +1653,78 @@ async def process_multi_group(client, app, node, group_msgs, single_thumb: bool)
                     media=photo.photo.file_id,
                     caption=caption if not media_list else ""))
 
-            if not media_list:
-                photo_msg = await upload_client.send_message(
-                    node.upload_telegram_chat_id,
-                    caption or "📷 详见评论区👇",
-                    message_thread_id=node.topic_id or None)
-            elif len(media_list) == 1:
-                # 单图片：用 client（获取消息的客户端）发送，避免 file_reference
-                # 跨客户端不匹配导致 MEDIA_EMPTY
-                fid = media_list[0].media
-                if not isinstance(fid, str) or not fid:
-                    logger.warning(f"Single photo has empty/invalid file_id")
+            try:
+                if not media_list:
                     photo_msg = await upload_client.send_message(
                         node.upload_telegram_chat_id,
                         caption or "📷 详见评论区👇",
                         message_thread_id=node.topic_id or None)
+                elif len(media_list) == 1:
+                    # 单图片：用 client（获取消息的客户端）发送，避免 file_reference
+                    # 跨客户端不匹配导致 MEDIA_EMPTY
+                    fid = media_list[0].media
+                    if not isinstance(fid, str) or not fid:
+                        logger.warning(f"Single photo has empty/invalid file_id")
+                        photo_msg = await upload_client.send_message(
+                            node.upload_telegram_chat_id,
+                            caption or "📷 详见评论区👇",
+                            message_thread_id=node.topic_id or None)
+                    else:
+                        try:
+                            photo_msg = await upload_client.send_photo(
+                                node.upload_telegram_chat_id, fid,
+                                caption=caption,
+                                message_thread_id=node.topic_id or None)
+                        except Exception:
+                            logger.warning(
+                                f"upload_client send_photo failed, retrying with client")
+                            photo_msg = await client.send_photo(
+                                node.upload_telegram_chat_id, fid,
+                                caption=caption,
+                                message_thread_id=node.topic_id or None)
                 else:
+                    # 多图相册同样：upload_client 发失败时回退到 client
                     try:
-                        photo_msg = await upload_client.send_photo(
-                            node.upload_telegram_chat_id, fid,
-                            caption=caption,
+                        sent = await upload_client.send_media_group(
+                            node.upload_telegram_chat_id, media_list,
                             message_thread_id=node.topic_id or None)
                     except Exception:
                         logger.warning(
-                            f"upload_client send_photo failed, retrying with client")
-                        photo_msg = await client.send_photo(
-                            node.upload_telegram_chat_id, fid,
-                            caption=caption,
+                            f"upload_client send_media_group failed, retrying with client")
+                        sent = await client.send_media_group(
+                            node.upload_telegram_chat_id, media_list,
                             message_thread_id=node.topic_id or None)
-            else:
-                # 多图相册同样：upload_client 发失败时回退到 client
-                try:
-                    sent = await upload_client.send_media_group(
-                        node.upload_telegram_chat_id, media_list,
-                        message_thread_id=node.topic_id or None)
-                except Exception:
-                    logger.warning(
-                        f"upload_client send_media_group failed, retrying with client")
-                    sent = await client.send_media_group(
-                        node.upload_telegram_chat_id, media_list,
-                        message_thread_id=node.topic_id or None)
-                photo_msg = sent[0] if sent else None
+                    photo_msg = sent[0] if sent else None
+            except Exception:
+                logger.exception(
+                    f"Failed to send photo album for mixed group")
+                photo_msg = None
 
-            if photo_msg and videos:
+            if photo_msg and (photos or videos):
                 try:
                     disc = await client.get_discussion_message(
                         node.upload_telegram_chat_id, photo_msg.id)
-                    for video in videos:
-                        await _copy_item(node, video, disc.chat.id,
-                            reply_to_message_id=disc.id, caption="")
+                    for item in photos + videos:
+                        try:
+                            await _copy_item(node, item, disc.chat.id,
+                                reply_to_message_id=disc.id, caption="")
+                        except Exception:
+                            try:
+                                await _copy_item(node, item, node.upload_telegram_chat_id,
+                                    reply_to_message_id=photo_msg.id, caption="")
+                            except Exception:
+                                node.failed_forward_ids.append(item.id)
                 except Exception:
-                    for video in videos:
-                        await _copy_item(node, video, node.upload_telegram_chat_id,
-                            reply_to_message_id=photo_msg.id, caption="")
+                    for item in photos + videos:
+                        try:
+                            await _copy_item(node, item, node.upload_telegram_chat_id,
+                                reply_to_message_id=photo_msg.id, caption="")
+                        except Exception:
+                            node.failed_forward_ids.append(item.id)
+            elif not photo_msg:
+                # 主帖完全失败 → 所有源消息ID记入失败
+                for m in group_msgs:
+                    node.failed_forward_ids.append(m.id)
 
     await report_bot_status(node.bot, node, immediate_reply=True)
 

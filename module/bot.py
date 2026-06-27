@@ -1060,6 +1060,13 @@ async def forward_message_impl(
                     f"⚠️ 已跳过 {len(skipped_screenshot_ids)} 个媒体组"
                     f"（/forward_screenshot 仅处理单条视频），消息 ID：{ids_str}",
                 )
+
+            if node.failed_forward_ids:
+                ids_str = ", ".join(str(x) for x in node.failed_forward_ids)
+                await client.send_message(
+                    message.from_user.id,
+                    f"❌ {len(node.failed_forward_ids)} 条消息发送失败，消息 ID：{ids_str}",
+                )
         except Exception as e:
             logger.exception(f"forward_message_impl error: {e}")
             try:
