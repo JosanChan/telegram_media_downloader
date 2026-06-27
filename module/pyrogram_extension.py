@@ -1547,26 +1547,31 @@ async def process_multi_group(client, app, node, group_msgs, single_thumb: bool)
         # 因此视频缩略图不放入相册。仅图片进相册相册，视频全部放评论区。
         # 纯视频组则回退单缩略图行为。
         if not photos:
-            # 纯视频组 → 回退单缩略图：第一张缩略图发主帖，全部视频进评论区
-            first = group_msgs[0]
-            thumb_path = None
-            if first.video and first.video.thumbs:
-                thumb_path = await download_thumbnail(client, app.temp_save_path, first)
-            if thumb_path:
+            # 纯视频组 → 每个视频缩略图单独发帖，全部视频进评论区
+            first_msg = None
+            for video in videos:
+                if not (video.video and video.video.thumbs):
+                    continue
+                thumb_path = await download_thumbnail(client, app.temp_save_path, video)
+                if not thumb_path:
+                    continue
                 try:
-                    photo_msg = await upload_client.send_photo(
+                    msg = await upload_client.send_photo(
                         node.upload_telegram_chat_id, thumb_path,
-                        caption=caption, message_thread_id=node.topic_id or None)
+                        caption=caption if not first_msg else "",
+                        message_thread_id=node.topic_id or None)
+                    if not first_msg:
+                        first_msg = msg
                 finally:
                     try:
                         os.remove(thumb_path)
                     except Exception:
                         pass
-            else:
-                photo_msg = await upload_client.send_message(
-                    node.upload_telegram_chat_id,
-                    caption or "📹 视频详见评论区👇",
-                    message_thread_id=node.topic_id or None)
+
+            photo_msg = first_msg or await upload_client.send_message(
+                node.upload_telegram_chat_id,
+                caption or "📹 视频详见评论区👇",
+                message_thread_id=node.topic_id or None)
 
             if photo_msg and videos:
                 try:
