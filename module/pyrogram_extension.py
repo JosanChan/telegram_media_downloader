@@ -1496,10 +1496,19 @@ async def _flush_multi_thumb(client, app, node, items):
             node.upload_telegram_chat_id, media_list[0].media,
             caption=combined, message_thread_id=node.topic_id)
     else:
-        msgs = await client.send_media_group(
-            node.upload_telegram_chat_id, media_list,
+        # 用 cache_media + send_media_group_v2 代替 send_media_group:
+        # 先通过 messages.UploadMedia 独立注册每张图片拿到 InputPhoto 引用,
+        # 再用 SendMultiMedia 发引用, 避免直接传 InputMediaUploadedPhoto 被 Telegram 拒绝
+        multi_media_raw = []
+        for m in media_list:
+            multi_media_raw.append(
+                await cache_media(client, node.upload_telegram_chat_id, m))
+        sent = await send_media_group_v2(
+            client,
+            node.upload_telegram_chat_id,
+            multi_media_raw,
             message_thread_id=node.topic_id)
-        photo_msg = msgs[0]
+        photo_msg = sent[0] if sent else None
 
     for f in thumb_files:
         try:
@@ -1516,18 +1525,19 @@ async def _flush_multi_thumb(client, app, node, items):
     except Exception:
         pass
 
-    try:
-        disc = await client.get_discussion_message(
-            node.upload_telegram_chat_id, photo_msg.id)
-        for item in items:
-            await _copy_item(node, item, disc.chat.id,
-                reply_to_message_id=disc.id,
-                message_thread_id=node.topic_id, caption="")
-    except Exception:
-        for item in items:
-            await _copy_item(node, item, node.upload_telegram_chat_id,
-                reply_to_message_id=photo_msg.id,
-                message_thread_id=node.topic_id, caption="")
+    if photo_msg:
+        try:
+            disc = await client.get_discussion_message(
+                node.upload_telegram_chat_id, photo_msg.id)
+            for item in items:
+                await _copy_item(node, item, disc.chat.id,
+                    reply_to_message_id=disc.id,
+                    message_thread_id=node.topic_id, caption="")
+        except Exception:
+            for item in items:
+                await _copy_item(node, item, node.upload_telegram_chat_id,
+                    reply_to_message_id=photo_msg.id,
+                    message_thread_id=node.topic_id, caption="")
     await report_bot_status(node.bot, node, immediate_reply=True)
 
 
