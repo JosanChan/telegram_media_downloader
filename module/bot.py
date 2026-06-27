@@ -1061,11 +1061,15 @@ async def forward_message_impl(
                     f"（/forward_screenshot 仅处理单条视频），消息 ID：{ids_str}",
                 )
         except Exception as e:
-            await client.edit_message_text(
-                message.from_user.id,
-                node.reply_message_id,
-                f"{_t('Error forwarding message')} {e}",
-            )
+            logger.exception(f"forward_message_impl error: {e}")
+            try:
+                await client.edit_message_text(
+                    message.from_user.id,
+                    node.reply_message_id,
+                    f"{_t('Error forwarding message')} {e}",
+                )
+            except Exception:
+                pass
         finally:
             if node.forward_multi_buffer and node.forward_album_mode:
                 try:

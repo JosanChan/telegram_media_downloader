@@ -1470,37 +1470,10 @@ async def process_multi_single_msg(client, app, node, item):
     await report_bot_status(node.bot, node, immediate_reply=True)
 
 
-async def _make_single_media_from_fid(client, file_id, caption=""):
-    """从 file_id 直接构造 InputSingleMedia，绕过 Pyrogram 的类型校验。
-    
-    对 PHOTO 和 THUMBNAIL 类型的 file_id 均适用：解码后提取
-    media_id/access_hash/file_reference，构造 InputMediaPhoto。
-    """
-    from pyrogram import raw, utils
-    from pyrogram.file_id import FileId
-    try:
-        decoded = FileId.decode(file_id)
-        media = raw.types.InputMediaPhoto(
-            id=raw.types.InputPhoto(
-                id=decoded.media_id,
-                access_hash=decoded.access_hash,
-                file_reference=decoded.file_reference
-            )
-        )
-        return raw.types.InputSingleMedia(
-            media=media,
-            random_id=client.rnd_id(),
-            **await client.parser.parse(caption or "")
-        )
-    except Exception as e:
-        logger.warning(f"Failed to construct media from file_id: {e}")
-        return None
-
-
 async def process_multi_group(client, app, node, group_msgs, single_thumb: bool):
     """forward_multi 媒体组处理
     single_thumb=True : 第一项（图→图；视频→缩略图）发主帖，全部图片+视频→评论区
-    single_thumb=False: 全部图片+全部视频缩略图→主帖；仅视频→评论区
+    single_thumb=False: 图片→相册主帖；纯视频组→回退单缩略图；视频→评论区
     """
     import pyrogram
     await app.forward_limit_call.wait(node)
@@ -1570,74 +1543,76 @@ async def process_multi_group(client, app, node, group_msgs, single_thumb: bool)
                     reply_to_message_id=photo_msg.id, caption="")
 
     else:
-        # 多缩略图：全部图片 + 全部视频缩略图 → 主帖；仅视频 → 评论区
-        # 视频缩略图 file_id 类型为 THUMBNAIL，Pyrogram 的类型检查会拒绝。
-        # 通过 _make_single_media_from_fid 直接解码 file_id 构 InputMediaPhoto
-        # 原始 InputMediaPhoto，绕过 Pyrogram 层，直调 raw API 发相册。
-        import pyrogram.raw as raw
-        multi_media: list = []
+        # 多缩略图：SendMultiMedia 不接受新上传的图片或 THUMBNAIL file_id，
+        # 因此视频缩略图不放入相册。仅图片进相册相册，视频全部放评论区。
+        # 纯视频组则回退单缩略图行为。
+        if not photos:
+            # 纯视频组 → 回退单缩略图：第一张缩略图发主帖，全部视频进评论区
+            first = group_msgs[0]
+            thumb_path = None
+            if first.video and first.video.thumbs:
+                thumb_path = await download_thumbnail(client, app.temp_save_path, first)
+            if thumb_path:
+                try:
+                    photo_msg = await upload_client.send_photo(
+                        node.upload_telegram_chat_id, thumb_path,
+                        caption=caption, message_thread_id=node.topic_id or None)
+                finally:
+                    try:
+                        os.remove(thumb_path)
+                    except Exception:
+                        pass
+            else:
+                photo_msg = await upload_client.send_message(
+                    node.upload_telegram_chat_id,
+                    caption or "📹 视频详见评论区👇",
+                    message_thread_id=node.topic_id or None)
 
-        for photo in photos:
-            # 图片消息的 file_id 是 PHOTO 类型，可直接使用
-            single = await _make_single_media_from_fid(upload_client,
-                photo.photo.file_id, caption=caption if not multi_media else "")
-            if single:
-                multi_media.append(single)
-
-        for video in videos:
-            if video.video and video.video.thumbs:
-                single = await _make_single_media_from_fid(upload_client,
-                    video.video.thumbs[-1].file_id,
-                    caption=caption if not multi_media else "")
-                if single:
-                    multi_media.append(single)
-
-        photo_msg = None
-        if not multi_media:
-            photo_msg = await upload_client.send_message(
-                node.upload_telegram_chat_id,
-                caption or "📹 视频详见评论区👇",
-                message_thread_id=node.topic_id or None)
-        elif len(multi_media) == 1:
-            r = await upload_client.invoke(
-                raw.functions.messages.SendMedia(
-                    peer=await upload_client.resolve_peer(node.upload_telegram_chat_id),
-                    media=multi_media[0].media,
-                    message=multi_media[0].message,
-                    random_id=multi_media[0].random_id,
-                    reply_to=pyrogram.utils.get_reply_to(
-                        message_thread_id=node.topic_id or None),
-                )
-            )
-            parsed = await pyrogram.utils.parse_messages(
-                upload_client,
-                raw.types.messages.Messages(
-                    messages=[
-                        u.message for u in r.updates
-                        if isinstance(u, (raw.types.UpdateNewMessage,
-                            raw.types.UpdateNewChannelMessage))
-                    ],
-                    users=r.users, chats=r.chats,
-                ),
-            )
-            photo_msg = parsed[0] if parsed else None
+            if photo_msg and videos:
+                try:
+                    disc = await client.get_discussion_message(
+                        node.upload_telegram_chat_id, photo_msg.id)
+                    for video in videos:
+                        await _copy_item(node, video, disc.chat.id,
+                            reply_to_message_id=disc.id, caption="")
+                except Exception:
+                    for video in videos:
+                        await _copy_item(node, video, node.upload_telegram_chat_id,
+                            reply_to_message_id=photo_msg.id, caption="")
         else:
-            sent = await send_media_group_v2(
-                upload_client, node.upload_telegram_chat_id, multi_media,
-                message_thread_id=node.topic_id or None)
-            photo_msg = sent[0] if sent else None
+            # 有图片 → 图片相册主帖，视频进评论区
+            media_list: list = []
+            for photo in photos:
+                media_list.append(pyrogram.types.InputMediaPhoto(
+                    media=photo.photo.file_id,
+                    caption=caption if not media_list else ""))
 
-        if photo_msg and videos:
-            try:
-                disc = await client.get_discussion_message(
-                    node.upload_telegram_chat_id, photo_msg.id)
-                for video in videos:
-                    await _copy_item(node, video, disc.chat.id,
-                        reply_to_message_id=disc.id, caption="")
-            except Exception:
-                for video in videos:
-                    await _copy_item(node, video, node.upload_telegram_chat_id,
-                        reply_to_message_id=photo_msg.id, caption="")
+            if not media_list:
+                photo_msg = await upload_client.send_message(
+                    node.upload_telegram_chat_id,
+                    caption or "📹 视频详见评论区👇",
+                    message_thread_id=node.topic_id or None)
+            elif len(media_list) == 1:
+                photo_msg = await upload_client.send_photo(
+                    node.upload_telegram_chat_id, media_list[0].media,
+                    caption=caption, message_thread_id=node.topic_id or None)
+            else:
+                sent = await upload_client.send_media_group(
+                    node.upload_telegram_chat_id, media_list,
+                    message_thread_id=node.topic_id or None)
+                photo_msg = sent[0] if sent else None
+
+            if photo_msg and videos:
+                try:
+                    disc = await client.get_discussion_message(
+                        node.upload_telegram_chat_id, photo_msg.id)
+                    for video in videos:
+                        await _copy_item(node, video, disc.chat.id,
+                            reply_to_message_id=disc.id, caption="")
+                except Exception:
+                    for video in videos:
+                        await _copy_item(node, video, node.upload_telegram_chat_id,
+                            reply_to_message_id=photo_msg.id, caption="")
 
     await report_bot_status(node.bot, node, immediate_reply=True)
 
