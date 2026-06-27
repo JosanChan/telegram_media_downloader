@@ -30,6 +30,7 @@ from module.language import Language, _t
 from module.pyrogram_extension import (
     check_user_permission,
     forward_clone_impl,
+    forward_screenshot_split_group,
     parse_link,
     proc_cache_forward,
     report_bot_forward_status,
@@ -1004,6 +1005,30 @@ async def forward_message_impl(
                     node.forward_multi_buffer.append(item)
                     if item.caption:
                         node.forward_multi_captions.append(item.caption)
+                    continue
+
+                # 截图模式下遇到媒体组：拆分图片→主帖，视频→评论区
+                if node.forward_video_screenshot and item.media_group_id:
+                    if not hasattr(node, '_seen_split_groups'):
+                        node._seen_split_groups = set()
+                    if item.media_group_id in node._seen_split_groups:
+                        continue
+                    node._seen_split_groups.add(item.media_group_id)
+                    try:
+                        group_msgs = await _bot.client.get_media_group(node.chat_id, item.id)
+                    except Exception:
+                        group_msgs = [item]
+                    await forward_screenshot_split_group(
+                        _bot.client, node.upload_user, _bot.app, node, group_msgs
+                    )
+                    await report_bot_status(client, node)
+                    if node.is_stop_transmission:
+                        await client.edit_message_text(
+                            message.from_user.id,
+                            node.reply_message_id,
+                            f"{_t('Stop Forward')}",
+                        )
+                        break
                     continue
 
                 await forward_normal_content(client, node, item)

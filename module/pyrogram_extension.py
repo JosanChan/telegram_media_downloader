@@ -1628,6 +1628,99 @@ async def _flush_album_mode(client, node, items):
                 node.upload_telegram_chat_id, media_list,
                 message_thread_id=node.topic_id)
 
+async def forward_screenshot_split_group(client, upload_user, app, node, group_msgs):
+    """媒体组截图拆分：图片发主帖，视频发评论区（逐组处理，不合并）。"""
+    await app.forward_limit_call.wait(node)
+
+    # 刷新 file_reference
+    try:
+        ids = [m.id for m in group_msgs]
+        refreshed = await client.get_messages(node.chat_id, ids)
+        if isinstance(refreshed, list):
+            by_id = {m.id: m for m in refreshed if m and not getattr(m, "empty", False)}
+            group_msgs = [by_id.get(m.id, m) for m in group_msgs]
+    except Exception:
+        pass
+
+    photos = [m for m in group_msgs if m.photo]
+    videos = [m for m in group_msgs if m.video]
+
+    if not photos or not videos:
+        # 不是图片+视频混合组，普通转发
+        for msg in group_msgs:
+            await upload_telegram_chat_message(client, upload_user, app, node, msg)
+        return
+
+    # 组合文案：优先取图片的 caption，否则取视频的
+    raw_caption = ""
+    raw_entities = None
+    for m in photos + videos:
+        if m.caption:
+            raw_caption = m.caption
+            raw_entities = m.caption_entities
+            break
+
+    if raw_caption and raw_entities:
+        caption = pyrogram.parser.Parser.unparse(raw_caption, raw_entities, True)
+    else:
+        caption = raw_caption
+
+    max_len = 4096 if (client.me and client.me.is_premium) else 1024
+    suffix = "\n\n视频详见评论区👇"
+    if caption:
+        if len(caption) + len(suffix) <= max_len:
+            caption = caption + suffix
+        else:
+            caption = caption[: max_len - len(suffix)] + suffix
+    else:
+        caption = "视频详见评论区👇"
+
+    # 发图片到目标频道
+    try:
+        if len(photos) == 1:
+            dst_post = await upload_user.send_photo(
+                node.upload_telegram_chat_id,
+                photos[0].photo.file_id,
+                caption=caption,
+                message_thread_id=node.topic_id,
+            )
+        else:
+            media = [
+                pyrogram.types.InputMediaPhoto(
+                    p.photo.file_id, caption=(caption if i == 0 else "")
+                )
+                for i, p in enumerate(photos)
+            ]
+            sent = await upload_user.send_media_group(
+                node.upload_telegram_chat_id,
+                media,
+                message_thread_id=node.topic_id,
+            )
+            dst_post = sent[0] if isinstance(sent, list) else sent
+        node.stat_forward(ForwardStatus.SuccessForward)
+    except Exception as e:
+        logger.warning(f"screenshot_split_group: send photo failed: {e}")
+        node.stat_forward(ForwardStatus.FailedForward)
+        return
+
+    # 把视频发到评论区
+    try:
+        disc = await client.get_discussion_message(node.upload_telegram_chat_id, dst_post.id)
+        for video_msg in videos:
+            await app.forward_limit_call.wait(node)
+            try:
+                await video_msg.copy(disc.chat.id, reply_to_message_id=disc.id, caption="")
+            except Exception as e:
+                logger.warning(f"screenshot_split_group: copy video {video_msg.id} failed: {e}")
+    except Exception:
+        # 目标频道没有讨论组，回退到直接发频道
+        for video_msg in videos:
+            try:
+                await video_msg.copy(node.upload_telegram_chat_id, caption="")
+            except Exception as e:
+                logger.warning(f"screenshot_split_group: fallback copy {video_msg.id} failed: {e}")
+
+
 async def _get_thread_replies(client, group_id, thread_msg_id):
     """Fetch all reply messages in a Telegram discussion thread via raw API."""
     from pyrogram.raw import functions as raw_fn
