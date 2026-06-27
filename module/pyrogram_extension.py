@@ -1490,6 +1490,11 @@ async def _flush_multi_thumb(client, app, node, items):
         photo_msg = await client.send_message(
             node.upload_telegram_chat_id, combined,
             message_thread_id=node.topic_id)
+    elif len(media_list) == 1:
+        # send_media_group 至少需要 2 项，单项改用 send_photo
+        photo_msg = await client.send_photo(
+            node.upload_telegram_chat_id, media_list[0].media,
+            caption=combined, message_thread_id=node.topic_id)
     else:
         msgs = await client.send_media_group(
             node.upload_telegram_chat_id, media_list,
@@ -1623,7 +1628,29 @@ async def _flush_album_mode(client, node, items):
                     node.stat_forward(ForwardStatus.FailedForward)
                     await report_bot_status(node.bot, node, immediate_reply=True)
                     continue
-        if media_list:
+        if len(media_list) == 1:
+            # send_media_group 至少需要 2 项，单项用 send_video/send_document
+            single = media_list[0]
+            if isinstance(single, pyrogram.types.InputMediaVideo):
+                await node.upload_user.send_video(
+                    node.upload_telegram_chat_id, single.media,
+                    caption=single.caption,
+                    width=getattr(single, 'width', None),
+                    height=getattr(single, 'height', None),
+                    duration=getattr(single, 'duration', None),
+                    supports_streaming=True,
+                    message_thread_id=node.topic_id)
+            elif isinstance(single, pyrogram.types.InputMediaDocument):
+                await node.upload_user.send_document(
+                    node.upload_telegram_chat_id, single.media,
+                    caption=single.caption,
+                    message_thread_id=node.topic_id)
+            elif isinstance(single, pyrogram.types.InputMediaPhoto):
+                await node.upload_user.send_photo(
+                    node.upload_telegram_chat_id, single.media,
+                    caption=single.caption,
+                    message_thread_id=node.topic_id)
+        elif len(media_list) > 1:
             await node.upload_user.send_media_group(
                 node.upload_telegram_chat_id, media_list,
                 message_thread_id=node.topic_id)

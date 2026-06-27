@@ -81,15 +81,40 @@ translations = {
         "Переслать видео со скриншотом, введите /forward_screenshot",
         "Переслати відео зі скріншотом, введіть /forward_screenshot",
     ],
+    "Forward single video: photo post + video in comments (one video only)": [
+        "单视频截图转发：封面发主帖，视频发评论区（仅处理单条，批量请用 /forward_multi）",
+        "Переслать одно видео со скриншотом, введите /forward_screenshot",
+        "Переслати одне відео зі скріншотом, введіть /forward_screenshot",
+    ],
     "Multi video screenshot forward": [
         "多视频截图转发，使用方法直接输入/forward_multi查看",
         "Переслать несколько видео со скриншотом, введите /forward_multi",
         "Переслати кілька відео зі скріншотом, введіть /forward_multi",
     ],
+    "Batch forward multiple videos as screenshot mode (single or multi thumb)": [
+        "批量截图转发：逐条生成封面帖+评论区视频（发送后选择单图/多图模式）",
+        "Пакетная пересылка видео со скриншотом, введите /forward_multi",
+        "Пакетне пересилання відео зі скріншотом, введіть /forward_multi",
+    ],
     "Merge multiple videos into album": [
         "合并多视频为媒体组，使用方法直接输入/forward_album查看",
         "Объединить видео в альбом, введите /forward_album",
         "Об'єднати відео в альбом, введіть /forward_album",
+    ],
+    "Clone channel preserving discussion structure": [
+        "克隆频道（保留讨论区结构）",
+        "Клонировать канал с сохранением структуры обсуждений",
+        "Клонувати канал зі збереженням структури обговорень",
+    ],
+    "Clone channel preserving discussion structure (photo post + comment videos)": [
+        "克隆频道：完整复制帖子及评论区内容，保留原有图片+视频结构",
+        "Клонировать канал с сохранением структуры обсуждений",
+        "Клонувати канал зі збереженням структури обговорень",
+    ],
+    "Forward a specific media to a comment section": [
+        "将指定媒体转发到评论区",
+        "Переслать медиа в раздел комментариев",
+        "Переслати медіа до розділу коментарів",
     ],
     "Listen forward, use the method to directly enter /listen_forward to view": [
         "监控转发，使用方法直接输入/listen_forward查看",
