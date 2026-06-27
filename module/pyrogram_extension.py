@@ -1480,7 +1480,7 @@ async def _flush_multi_thumb(client, app, node, items):
         thumb = None
         if item.video:
             thumb = await download_thumbnail(client, app.temp_save_path, item)
-        if thumb:
+        if thumb and os.path.getsize(thumb) > 0:
             thumb_files.append(thumb)
             cap = combined if i == 0 else ""
             media_list.append(
@@ -1534,6 +1534,7 @@ async def _flush_multi_thumb(client, app, node, items):
 async def _flush_album_mode(client, node, items):
     """Mode B: 合并媒体项为媒体组(<=10/组)，文字单独转发"""
     import pyrogram
+    temp_files = []
     captions = [c for c in node.forward_multi_captions if c]
     combined = "\n---\n".join(captions) if captions else "视频详见评论区👇"
     if captions:
@@ -1654,6 +1655,12 @@ async def _flush_album_mode(client, node, items):
             await node.upload_user.send_media_group(
                 node.upload_telegram_chat_id, media_list,
                 message_thread_id=node.topic_id)
+
+    for f in temp_files:
+        try:
+            os.remove(f)
+        except Exception:
+            pass
 
 async def forward_screenshot_split_group(client, upload_user, app, node, group_msgs):
     """媒体组截图拆分，规则：

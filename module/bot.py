@@ -1051,7 +1051,7 @@ async def forward_message_impl(
                     from module.pyrogram_extension import finalize_forward_multi
                     await finalize_forward_multi(_bot.client, _bot.app, node)
                 except Exception as e:
-                    logger.error(f"finalize_forward_multi failed: {e}")
+                    logger.exception(f"finalize_forward_multi failed: {e}")
                     try:
                         await client.edit_message_text(
                             node.from_user_id,
