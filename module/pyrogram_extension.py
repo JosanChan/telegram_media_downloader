@@ -1469,22 +1469,31 @@ async def _flush_multi_thumb(client, app, node, items):
     """Mode A-多个: 媒体组缩略图相册帖 + 全部内容进评论区"""
     import pyrogram
     await report_bot_status(node.bot, node)
-    thumb_files = []
     media_list = []
 
     captions = [c for c in node.forward_multi_captions if c]
     combined = "\n---\n".join(captions[:3]) if captions else ""
     combined += f"\n\n共{len(items)}个素材\n\n视频详见评论区👇"
 
-    for i, item in enumerate(items[:10]):
-        thumb = None
-        if item.video:
-            thumb = await download_thumbnail(client, app.temp_save_path, item)
-        if thumb and os.path.getsize(thumb) > 0:
-            thumb_files.append(thumb)
+    # 先刷新 file_reference，避免缩略图 file_id 过期
+    try:
+        refreshed = await client.get_messages(node.chat_id, [m.id for m in items[:10]])
+        if isinstance(refreshed, list):
+            by_id = {m.id: m for m in refreshed if m and not getattr(m, 'empty', False)}
+            fresh10 = [by_id.get(item.id, item) for item in items[:10]]
+        else:
+            fresh10 = items[:10]
+    except Exception:
+        fresh10 = items[:10]
+
+    # 直接用 Telegram 已存储的缩略图 file_id，不下载不上传
+    # 与 _flush_album_mode 中用 msg.photo.file_id 的做法一致
+    for i, item in enumerate(fresh10):
+        if item.video and item.video.thumbs:
+            thumb_fid = item.video.thumbs[-1].file_id
             cap = combined if i == 0 else ""
             media_list.append(
-                pyrogram.types.InputMediaPhoto(media=thumb, caption=cap))
+                pyrogram.types.InputMediaPhoto(media=thumb_fid, caption=cap))
 
     upload_client = node.upload_user or client
     if not media_list:
@@ -1496,31 +1505,17 @@ async def _flush_multi_thumb(client, app, node, items):
             node.upload_telegram_chat_id, media_list[0].media,
             caption=combined, message_thread_id=node.topic_id or None)
     else:
-        # 用 upload_client (bot) 做 UploadMedia + SendMultiMedia，
-        # 与 _flush_album_mode 保持一致，避免 user 账号跨 DC 问题
-        multi_media_raw = []
-        for m in media_list:
-            multi_media_raw.append(
-                await cache_media(upload_client, node.upload_telegram_chat_id, m))
-        sent = await send_media_group_v2(
-            upload_client,
-            node.upload_telegram_chat_id,
-            multi_media_raw,
+        msgs = await upload_client.send_media_group(
+            node.upload_telegram_chat_id, media_list,
             message_thread_id=node.topic_id or None)
-        photo_msg = sent[0] if sent else None
+        photo_msg = msgs[0] if msgs else None
 
-    for f in thumb_files:
-        try:
-            os.remove(f)
-        except Exception:
-            pass
-
-    # Batch-refresh all file references in one call to avoid stale file_id errors
+    # 刷新全部 items 的 file_reference 后再复制到评论区
     try:
-        refreshed = await client.get_messages(node.chat_id, [m.id for m in items])
-        if isinstance(refreshed, list):
+        refreshed_all = await client.get_messages(node.chat_id, [m.id for m in items])
+        if isinstance(refreshed_all, list):
             items = [f if (f and not getattr(f, 'empty', False)) else o
-                     for f, o in zip(refreshed, items)]
+                     for f, o in zip(refreshed_all, items)]
     except Exception:
         pass
 
