@@ -1437,6 +1437,11 @@ async def process_multi_single_msg(client, app, node, item):
             pass
 
         caption = _clean_caption(item.caption or "")
+        if item.video:
+            if not caption:
+                caption = "视频详见评论区👇"
+            elif len(caption) + len("\n\n视频详见评论区👇") <= 1024 and "视频详见评论区" not in caption:
+                caption += "\n\n视频详见评论区👇"
         thumb_path = None
         if item.video.thumbs:
             thumb_path = await download_thumbnail(client, app.temp_save_path, item)
@@ -1506,9 +1511,9 @@ async def process_multi_group(client, app, node, group_msgs, single_thumb: bool)
     caption = _clean_caption(caption)
 
     if not single_thumb and videos:
-        suffix = "\n\n📹 视频详见评论区👇"
+        suffix = "\n\n视频详见评论区👇"
         if not caption:
-            caption = "📹 视频详见评论区👇"
+            caption = "视频详见评论区👇"
         elif len(caption) + len(suffix) <= 1024 and "视频详见评论区" not in caption:
             caption += suffix
 
