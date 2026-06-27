@@ -1633,26 +1633,33 @@ async def process_multi_group(client, app, node, group_msgs, single_thumb: bool)
                         pass
 
             if photo_msg and videos:
+                comment_media = [
+                    pyrogram.types.InputMediaVideo(
+                        media=v.video.file_id, caption="",
+                        width=v.video.width, height=v.video.height,
+                        duration=v.video.duration, supports_streaming=True)
+                    for v in videos]
                 try:
                     disc = await client.get_discussion_message(
                         node.upload_telegram_chat_id, photo_msg.id)
-                    for video in videos:
-                        try:
-                            await _copy_item(node, video, disc.chat.id,
-                                reply_to_message_id=disc.id, caption="")
-                        except Exception:
-                            try:
-                                await _copy_item(node, video, node.upload_telegram_chat_id,
-                                    reply_to_message_id=photo_msg.id, caption="")
-                            except Exception:
-                                node.failed_forward_ids.append(video.id)
+                    await _send_media_or_single(
+                        client, disc.chat.id, comment_media,
+                        reply_to_message_id=disc.id,
+                        message_thread_id=node.topic_id or None)
+                    for v in videos:
+                        node.stat_forward(ForwardStatus.SuccessForward)
                 except Exception:
-                    for video in videos:
-                        try:
-                            await _copy_item(node, video, node.upload_telegram_chat_id,
-                                reply_to_message_id=photo_msg.id, caption="")
-                        except Exception:
-                            node.failed_forward_ids.append(video.id)
+                    try:
+                        await _send_media_or_single(
+                            client, node.upload_telegram_chat_id, comment_media,
+                            reply_to_message_id=photo_msg.id,
+                            message_thread_id=node.topic_id or None)
+                        for v in videos:
+                            node.stat_forward(ForwardStatus.SuccessForward)
+                    except Exception:
+                        for v in videos:
+                            node.failed_forward_ids.append(v.id)
+                            node.stat_forward(ForwardStatus.FailedForward)
         else:
             # 图片+视频组：仅图片相册 → 主帖；全部图片+视频 → 评论区
             # 图片 file_id 是 PHOTO 类型，可直接用于 send_media_group，无需暂存
@@ -1710,26 +1717,37 @@ async def process_multi_group(client, app, node, group_msgs, single_thumb: bool)
                 photo_msg = None
 
             if photo_msg and (photos or videos):
+                comment_media = []
+                for item in photos + videos:
+                    if item.photo:
+                        comment_media.append(pyrogram.types.InputMediaPhoto(
+                            media=item.photo.file_id, caption=""))
+                    elif item.video:
+                        comment_media.append(pyrogram.types.InputMediaVideo(
+                            media=item.video.file_id, caption="",
+                            width=item.video.width, height=item.video.height,
+                            duration=item.video.duration, supports_streaming=True))
                 try:
                     disc = await client.get_discussion_message(
                         node.upload_telegram_chat_id, photo_msg.id)
+                    await _send_media_or_single(
+                        client, disc.chat.id, comment_media,
+                        reply_to_message_id=disc.id,
+                        message_thread_id=node.topic_id or None)
                     for item in photos + videos:
-                        try:
-                            await _copy_item(node, item, disc.chat.id,
-                                reply_to_message_id=disc.id, caption="")
-                        except Exception:
-                            try:
-                                await _copy_item(node, item, node.upload_telegram_chat_id,
-                                    reply_to_message_id=photo_msg.id, caption="")
-                            except Exception:
-                                node.failed_forward_ids.append(item.id)
+                        node.stat_forward(ForwardStatus.SuccessForward)
                 except Exception:
-                    for item in photos + videos:
-                        try:
-                            await _copy_item(node, item, node.upload_telegram_chat_id,
-                                reply_to_message_id=photo_msg.id, caption="")
-                        except Exception:
+                    try:
+                        await _send_media_or_single(
+                            client, node.upload_telegram_chat_id, comment_media,
+                            reply_to_message_id=photo_msg.id,
+                            message_thread_id=node.topic_id or None)
+                        for item in photos + videos:
+                            node.stat_forward(ForwardStatus.SuccessForward)
+                    except Exception:
+                        for item in photos + videos:
                             node.failed_forward_ids.append(item.id)
+                            node.stat_forward(ForwardStatus.FailedForward)
             elif not photo_msg:
                 # 主帖完全失败 → 所有源消息ID记入失败
                 for m in group_msgs:
@@ -2266,6 +2284,23 @@ def _transcode_video(video_path):
     except Exception:
         pass
     return None
+
+
+async def _send_media_or_single(client, chat_id, media_list, **kwargs):
+    if len(media_list) == 1:
+        single = media_list[0]
+        if isinstance(single, pyrogram.types.InputMediaVideo):
+            await client.send_video(chat_id, single.media,
+                caption=single.caption,
+                width=getattr(single, 'width', None),
+                height=getattr(single, 'height', None),
+                duration=getattr(single, 'duration', None),
+                supports_streaming=True, **kwargs)
+        elif isinstance(single, pyrogram.types.InputMediaPhoto):
+            await client.send_photo(chat_id, single.media,
+                caption=single.caption, **kwargs)
+    else:
+        await client.send_media_group(chat_id, media_list, **kwargs)
 
 
 def _clean_caption(text: str) -> str:
