@@ -1470,6 +1470,33 @@ async def process_multi_single_msg(client, app, node, item):
     await report_bot_status(node.bot, node, immediate_reply=True)
 
 
+async def _make_single_media_from_fid(client, file_id, caption=""):
+    """从 file_id 直接构造 InputSingleMedia，绕过 Pyrogram 的类型校验。
+    
+    对 PHOTO 和 THUMBNAIL 类型的 file_id 均适用：解码后提取
+    media_id/access_hash/file_reference，构造 InputMediaPhoto。
+    """
+    from pyrogram import raw, utils
+    from pyrogram.file_id import FileId
+    try:
+        decoded = FileId.decode(file_id)
+        media = raw.types.InputMediaPhoto(
+            id=raw.types.InputPhoto(
+                id=decoded.media_id,
+                access_hash=decoded.access_hash,
+                file_reference=decoded.file_reference
+            )
+        )
+        return raw.types.InputSingleMedia(
+            media=media,
+            random_id=client.rnd_id(),
+            **await client.parser.parse(caption or "")
+        )
+    except Exception as e:
+        logger.warning(f"Failed to construct media from file_id: {e}")
+        return None
+
+
 async def process_multi_group(client, app, node, group_msgs, single_thumb: bool):
     """forward_multi 媒体组处理
     single_thumb=True : 第一项（图→图；视频→缩略图）发主帖，全部图片+视频→评论区
@@ -1544,60 +1571,61 @@ async def process_multi_group(client, app, node, group_msgs, single_thumb: bool)
 
     else:
         # 多缩略图：全部图片 + 全部视频缩略图 → 主帖；仅视频 → 评论区
-        # 视频缩略图是 THUMBNAIL 类型，不能直接用 file_id 发 send_media_group（Pyrogram
-        # 会校验 FileType），需先 send_photo 到暂存频道获取 PHOTO 类型 file_id 再使用。
-        media_list: list = []
-        staging_msgs: list = []
+        # 视频缩略图 file_id 类型为 THUMBNAIL，Pyrogram 的类型检查会拒绝。
+        # 通过 _make_single_media_from_fid 直接解码 file_id 构 InputMediaPhoto
+        # 原始 InputMediaPhoto，绕过 Pyrogram 层，直调 raw API 发相册。
+        import pyrogram.raw as raw
+        multi_media: list = []
 
         for photo in photos:
             # 图片消息的 file_id 是 PHOTO 类型，可直接使用
-            media_list.append(pyrogram.types.InputMediaPhoto(
-                media=photo.photo.file_id,
-                caption=caption if not media_list else ""))
+            single = await _make_single_media_from_fid(upload_client,
+                photo.photo.file_id, caption=caption if not multi_media else "")
+            if single:
+                multi_media.append(single)
 
         for video in videos:
-            if not (video.video and video.video.thumbs):
-                continue
-            thumb_path = await download_thumbnail(client, app.temp_save_path, video)
-            if not thumb_path:
-                continue
-            try:
-                # 暂存到用户 DM，获取 PHOTO 类型 file_id
-                staged = await upload_client.send_photo(node.from_user_id, thumb_path)
-                staging_msgs.append(staged)
-                media_list.append(pyrogram.types.InputMediaPhoto(
-                    media=staged.photo.file_id,
-                    caption=caption if not media_list else ""))
-            except Exception as e:
-                logger.warning(f"Failed to stage thumbnail for video {video.id}: {e}")
-            finally:
-                try:
-                    os.remove(thumb_path)
-                except Exception:
-                    pass
+            if video.video and video.video.thumbs:
+                single = await _make_single_media_from_fid(upload_client,
+                    video.video.thumbs[-1].file_id,
+                    caption=caption if not multi_media else "")
+                if single:
+                    multi_media.append(single)
 
         photo_msg = None
-        if not media_list:
+        if not multi_media:
             photo_msg = await upload_client.send_message(
                 node.upload_telegram_chat_id,
                 caption or "📹 视频详见评论区👇",
                 message_thread_id=node.topic_id or None)
-        elif len(media_list) == 1:
-            photo_msg = await upload_client.send_photo(
-                node.upload_telegram_chat_id, media_list[0].media,
-                caption=caption, message_thread_id=node.topic_id or None)
+        elif len(multi_media) == 1:
+            r = await upload_client.invoke(
+                raw.functions.messages.SendMedia(
+                    peer=await upload_client.resolve_peer(node.upload_telegram_chat_id),
+                    media=multi_media[0].media,
+                    message=multi_media[0].message,
+                    random_id=multi_media[0].random_id,
+                    reply_to=pyrogram.utils.get_reply_to(
+                        message_thread_id=node.topic_id or None),
+                )
+            )
+            parsed = await pyrogram.utils.parse_messages(
+                upload_client,
+                raw.types.messages.Messages(
+                    messages=[
+                        u.message for u in r.updates
+                        if isinstance(u, (raw.types.UpdateNewMessage,
+                            raw.types.UpdateNewChannelMessage))
+                    ],
+                    users=r.users, chats=r.chats,
+                ),
+            )
+            photo_msg = parsed[0] if parsed else None
         else:
-            sent = await upload_client.send_media_group(
-                node.upload_telegram_chat_id, media_list,
+            sent = await send_media_group_v2(
+                upload_client, node.upload_telegram_chat_id, multi_media,
                 message_thread_id=node.topic_id or None)
             photo_msg = sent[0] if sent else None
-
-        # 清理暂存消息
-        for msg in staging_msgs:
-            try:
-                await msg.delete()
-            except Exception:
-                pass
 
         if photo_msg and videos:
             try:
