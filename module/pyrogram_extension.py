@@ -1448,9 +1448,17 @@ async def process_multi_single_msg(client, app, node, item):
 
         if thumb_path:
             try:
-                photo_msg = await upload_client.send_photo(
-                    node.upload_telegram_chat_id, thumb_path,
-                    caption=caption, message_thread_id=node.topic_id or None)
+                try:
+                    photo_msg = await upload_client.send_photo(
+                        node.upload_telegram_chat_id, thumb_path,
+                        caption=caption, message_thread_id=node.topic_id or None)
+                except Exception:
+                    logger.warning(
+                        f"upload_client send_photo failed for msg {item.id}, "
+                        f"retrying with client")
+                    photo_msg = await client.send_photo(
+                        node.upload_telegram_chat_id, thumb_path,
+                        caption=caption, message_thread_id=node.topic_id or None)
             finally:
                 try:
                     os.remove(thumb_path)
