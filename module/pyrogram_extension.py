@@ -1496,19 +1496,26 @@ async def _flush_multi_thumb(client, app, node, items):
             node.upload_telegram_chat_id, media_list[0].media,
             caption=combined, message_thread_id=node.topic_id)
     else:
-        # 用 cache_media + send_media_group_v2 代替 send_media_group:
-        # 先通过 messages.UploadMedia 独立注册每张图片拿到 InputPhoto 引用,
-        # 再用 SendMultiMedia 发引用, 避免直接传 InputMediaUploadedPhoto 被 Telegram 拒绝
-        multi_media_raw = []
-        for m in media_list:
-            multi_media_raw.append(
-                await cache_media(client, node.upload_telegram_chat_id, m))
-        sent = await send_media_group_v2(
-            client,
-            node.upload_telegram_chat_id,
-            multi_media_raw,
-            message_thread_id=node.topic_id)
-        photo_msg = sent[0] if sent else None
+        # 先尝试 cache_media + send_media_group_v2 发缩略图相册；
+        # 若 Telegram 报 MEDIA_FILE_INVALID（常见于跨 DC 场景），
+        # 退化为只发第一张缩略图（与 single-thumb 模式一致），保证任务不中断。
+        try:
+            multi_media_raw = []
+            for m in media_list:
+                multi_media_raw.append(
+                    await cache_media(client, node.upload_telegram_chat_id, m))
+            sent = await send_media_group_v2(
+                client,
+                node.upload_telegram_chat_id,
+                multi_media_raw,
+                message_thread_id=node.topic_id)
+            photo_msg = sent[0] if sent else None
+        except Exception as e:
+            logger.warning(
+                f"thumbnail album failed ({e}), falling back to single photo")
+            photo_msg = await client.send_photo(
+                node.upload_telegram_chat_id, media_list[0].media,
+                caption=combined, message_thread_id=node.topic_id)
 
     for f in thumb_files:
         try:
