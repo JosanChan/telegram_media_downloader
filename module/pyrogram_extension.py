@@ -1436,12 +1436,20 @@ async def process_multi_single_msg(client, app, node, item):
             pass
 
         caption = item.caption or ""
-        thumb_fid = item.video.thumbs[-1].file_id if item.video.thumbs else None
+        thumb_path = None
+        if item.video.thumbs:
+            thumb_path = await download_thumbnail(client, app.temp_save_path, item)
 
-        if thumb_fid:
-            photo_msg = await upload_client.send_photo(
-                node.upload_telegram_chat_id, thumb_fid,
-                caption=caption, message_thread_id=node.topic_id or None)
+        if thumb_path:
+            try:
+                photo_msg = await upload_client.send_photo(
+                    node.upload_telegram_chat_id, thumb_path,
+                    caption=caption, message_thread_id=node.topic_id or None)
+            finally:
+                try:
+                    os.remove(thumb_path)
+                except Exception:
+                    pass
         else:
             photo_msg = await upload_client.send_message(
                 node.upload_telegram_chat_id,
@@ -1500,11 +1508,19 @@ async def process_multi_group(client, app, node, group_msgs, single_thumb: bool)
                 node.upload_telegram_chat_id, first.photo.file_id,
                 caption=caption, message_thread_id=node.topic_id or None)
         elif first.video:
-            thumb_fid = first.video.thumbs[-1].file_id if first.video.thumbs else None
-            if thumb_fid:
-                photo_msg = await upload_client.send_photo(
-                    node.upload_telegram_chat_id, thumb_fid,
-                    caption=caption, message_thread_id=node.topic_id or None)
+            thumb_path = None
+            if first.video.thumbs:
+                thumb_path = await download_thumbnail(client, app.temp_save_path, first)
+            if thumb_path:
+                try:
+                    photo_msg = await upload_client.send_photo(
+                        node.upload_telegram_chat_id, thumb_path,
+                        caption=caption, message_thread_id=node.topic_id or None)
+                finally:
+                    try:
+                        os.remove(thumb_path)
+                    except Exception:
+                        pass
             else:
                 photo_msg = await upload_client.send_message(
                     node.upload_telegram_chat_id,
@@ -1528,18 +1544,39 @@ async def process_multi_group(client, app, node, group_msgs, single_thumb: bool)
 
     else:
         # 多缩略图：全部图片 + 全部视频缩略图 → 主帖；仅视频 → 评论区
+        # 视频缩略图是 THUMBNAIL 类型，不能直接用 file_id 发 send_media_group（Pyrogram
+        # 会校验 FileType），需先 send_photo 到暂存频道获取 PHOTO 类型 file_id 再使用。
         media_list: list = []
+        staging_msgs: list = []
+
         for photo in photos:
+            # 图片消息的 file_id 是 PHOTO 类型，可直接使用
             media_list.append(pyrogram.types.InputMediaPhoto(
                 media=photo.photo.file_id,
                 caption=caption if not media_list else ""))
-        for video in videos:
-            if video.video and video.video.thumbs:
-                thumb_fid = video.video.thumbs[-1].file_id
-                media_list.append(pyrogram.types.InputMediaPhoto(
-                    media=thumb_fid,
-                    caption=caption if not media_list else ""))
 
+        for video in videos:
+            if not (video.video and video.video.thumbs):
+                continue
+            thumb_path = await download_thumbnail(client, app.temp_save_path, video)
+            if not thumb_path:
+                continue
+            try:
+                # 暂存到用户 DM，获取 PHOTO 类型 file_id
+                staged = await upload_client.send_photo(node.from_user_id, thumb_path)
+                staging_msgs.append(staged)
+                media_list.append(pyrogram.types.InputMediaPhoto(
+                    media=staged.photo.file_id,
+                    caption=caption if not media_list else ""))
+            except Exception as e:
+                logger.warning(f"Failed to stage thumbnail for video {video.id}: {e}")
+            finally:
+                try:
+                    os.remove(thumb_path)
+                except Exception:
+                    pass
+
+        photo_msg = None
         if not media_list:
             photo_msg = await upload_client.send_message(
                 node.upload_telegram_chat_id,
@@ -1554,6 +1591,13 @@ async def process_multi_group(client, app, node, group_msgs, single_thumb: bool)
                 node.upload_telegram_chat_id, media_list,
                 message_thread_id=node.topic_id or None)
             photo_msg = sent[0] if sent else None
+
+        # 清理暂存消息
+        for msg in staging_msgs:
+            try:
+                await msg.delete()
+            except Exception:
+                pass
 
         if photo_msg and videos:
             try:
