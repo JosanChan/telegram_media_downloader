@@ -2,6 +2,7 @@
 
 import asyncio
 import os
+import re
 import subprocess
 import secrets
 import struct
@@ -515,7 +516,7 @@ async def _upload_telegram_chat_message(
     """
     await app.forward_limit_call.wait(node)
 
-    caption = message.caption
+    caption = _clean_caption(message.caption or "")
     caption_entities = message.caption_entities
 
     # Convert caption and caption_entities to markdown format
@@ -638,7 +639,7 @@ async def forward_multi_media(
     file_name: str = None,
 ):
     """Forward multi media by cache"""
-    caption = message.caption
+    caption = _clean_caption(message.caption or "")
     caption_entities = message.caption_entities
     if not caption:
         caption = app.get_caption_name(node.chat_id, message.media_group_id)
@@ -1435,7 +1436,7 @@ async def process_multi_single_msg(client, app, node, item):
         except Exception:
             pass
 
-        caption = item.caption or ""
+        caption = _clean_caption(item.caption or "")
         thumb_path = None
         if item.video.thumbs:
             thumb_path = await download_thumbnail(client, app.temp_save_path, item)
@@ -1502,6 +1503,14 @@ async def process_multi_group(client, app, node, group_msgs, single_thumb: bool)
         return
 
     caption = next((m.caption for m in group_msgs if m.caption), "") or ""
+    caption = _clean_caption(caption)
+
+    if not single_thumb and videos:
+        suffix = "\n\n📹 视频详见评论区👇"
+        if not caption:
+            caption = "📹 视频详见评论区👇"
+        elif len(caption) + len(suffix) <= 1024 and "视频详见评论区" not in caption:
+            caption += suffix
 
     if single_thumb:
         # 单缩略图：看第一个元素是图片还是视频
@@ -1736,7 +1745,7 @@ async def _flush_single_thumb(client, app, node, items):
     if first.video:
         thumb = await download_thumbnail(client, app.temp_save_path, first)
 
-    captions = [c for c in node.forward_multi_captions if c]
+    captions = [_clean_caption(c) for c in node.forward_multi_captions if c]
     caption = "\n---\n".join(captions[:3]) if captions else ""
     caption += f"\n\n共{len(items)}个素材\n\n视频详见评论区👇"
 
@@ -1780,7 +1789,7 @@ async def _flush_multi_thumb(client, app, node, items):
     await report_bot_status(node.bot, node)
     media_list = []
 
-    captions = [c for c in node.forward_multi_captions if c]
+    captions = [_clean_caption(c) for c in node.forward_multi_captions if c]
     combined = "\n---\n".join(captions[:3]) if captions else ""
     combined += f"\n\n共{len(items)}个素材\n\n视频详见评论区👇"
 
@@ -1848,7 +1857,7 @@ async def _flush_album_mode(client, node, items):
     """Mode B: 合并媒体项为媒体组(<=10/组)，文字单独转发"""
     import pyrogram
     temp_files = []
-    captions = [c for c in node.forward_multi_captions if c]
+    captions = [_clean_caption(c) for c in node.forward_multi_captions if c]
     combined = "\n---\n".join(captions) if captions else "视频详见评论区👇"
     if captions:
         combined = "\n---\n".join(captions) + "\n\n视频详见评论区👇"
@@ -2017,6 +2026,7 @@ async def forward_screenshot_split_group(client, upload_user, app, node, group_m
         caption = pyrogram.parser.Parser.unparse(raw_caption, raw_entities, True)
     else:
         caption = raw_caption or ""
+    caption = _clean_caption(caption)
 
     max_len = 4096 if (client.me and client.me.is_premium) else 1024
 
@@ -2256,3 +2266,10 @@ def _transcode_video(video_path):
     except Exception:
         pass
     return None
+
+
+def _clean_caption(text: str) -> str:
+    if not text:
+        return text
+    text = re.sub(r'\n?\s*火爆指数：[^\n]*\n?', '', text).strip()
+    return text
