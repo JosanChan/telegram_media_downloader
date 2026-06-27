@@ -30,9 +30,10 @@ from module.language import Language, _t
 from module.pyrogram_extension import (
     check_user_permission,
     forward_clone_impl,
-    forward_screenshot_split_group,
     parse_link,
     proc_cache_forward,
+    process_multi_group,
+    process_multi_single_msg,
     report_bot_forward_status,
     report_bot_status,
     retry,
@@ -991,6 +992,9 @@ async def forward_message_impl(
 
     if not node.has_protected_content:
         try:
+            seen_multi_groups: set = set()
+            seen_skip_groups: set = set()
+            skipped_screenshot_ids: list = []
             async for item in get_chat_history_v2(  # type: ignore
                 _bot.client,
                 node.chat_id,
@@ -999,7 +1003,7 @@ async def forward_message_impl(
                 offset_id=offset_id,
                 reverse=True,
             ):
-                if node.forward_multi_mode or node.forward_album_mode:
+                if node.forward_album_mode:
                     if node.is_stop_transmission:
                         break
                     node.forward_multi_buffer.append(item)
@@ -1007,20 +1011,22 @@ async def forward_message_impl(
                         node.forward_multi_captions.append(item.caption)
                     continue
 
-                # 截图模式下遇到媒体组：拆分图片→主帖，视频→评论区
-                if node.forward_video_screenshot and item.media_group_id:
-                    if not hasattr(node, '_seen_split_groups'):
-                        node._seen_split_groups = set()
-                    if item.media_group_id in node._seen_split_groups:
-                        continue
-                    node._seen_split_groups.add(item.media_group_id)
-                    try:
-                        group_msgs = await _bot.client.get_media_group(node.chat_id, item.id)
-                    except Exception:
-                        group_msgs = [item]
-                    await forward_screenshot_split_group(
-                        _bot.client, node.upload_user, _bot.app, node, group_msgs
-                    )
+                if node.forward_multi_mode:
+                    if node.is_stop_transmission:
+                        break
+                    if item.media_group_id:
+                        if item.media_group_id in seen_multi_groups:
+                            continue
+                        seen_multi_groups.add(item.media_group_id)
+                        try:
+                            group_msgs = await _bot.client.get_media_group(node.chat_id, item.id)
+                        except Exception:
+                            group_msgs = [item]
+                        await process_multi_group(
+                            _bot.client, _bot.app, node, group_msgs, node.forward_multi_single_thumb
+                        )
+                    else:
+                        await process_multi_single_msg(_bot.client, _bot.app, node, item)
                     await report_bot_status(client, node)
                     if node.is_stop_transmission:
                         await client.edit_message_text(
@@ -1031,6 +1037,13 @@ async def forward_message_impl(
                         break
                     continue
 
+                # 截图模式下遇到媒体组：跳过，记录 ID 供事后反馈
+                if node.forward_video_screenshot and item.media_group_id:
+                    if item.media_group_id not in seen_skip_groups:
+                        seen_skip_groups.add(item.media_group_id)
+                        skipped_screenshot_ids.append(item.id)
+                    continue
+
                 await forward_normal_content(client, node, item)
                 if node.is_stop_transmission:
                     await client.edit_message_text(
@@ -1039,6 +1052,14 @@ async def forward_message_impl(
                         f"{_t('Stop Forward')}",
                     )
                     break
+
+            if skipped_screenshot_ids:
+                ids_str = ", ".join(str(x) for x in skipped_screenshot_ids)
+                await client.send_message(
+                    message.from_user.id,
+                    f"⚠️ 已跳过 {len(skipped_screenshot_ids)} 个媒体组"
+                    f"（/forward_screenshot 仅处理单条视频），消息 ID：{ids_str}",
+                )
         except Exception as e:
             await client.edit_message_text(
                 message.from_user.id,
@@ -1046,7 +1067,7 @@ async def forward_message_impl(
                 f"{_t('Error forwarding message')} {e}",
             )
         finally:
-            if node.forward_multi_buffer and (node.forward_multi_mode or node.forward_album_mode):
+            if node.forward_multi_buffer and node.forward_album_mode:
                 try:
                     from module.pyrogram_extension import finalize_forward_multi
                     await finalize_forward_multi(_bot.client, _bot.app, node)
