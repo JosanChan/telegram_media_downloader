@@ -1486,36 +1486,28 @@ async def _flush_multi_thumb(client, app, node, items):
             media_list.append(
                 pyrogram.types.InputMediaPhoto(media=thumb, caption=cap))
 
+    upload_client = node.upload_user or client
     if not media_list:
-        photo_msg = await client.send_message(
+        photo_msg = await upload_client.send_message(
             node.upload_telegram_chat_id, combined,
-            message_thread_id=node.topic_id)
+            message_thread_id=node.topic_id or None)
     elif len(media_list) == 1:
-        # send_media_group 至少需要 2 项，单项改用 send_photo
-        photo_msg = await client.send_photo(
+        photo_msg = await upload_client.send_photo(
             node.upload_telegram_chat_id, media_list[0].media,
-            caption=combined, message_thread_id=node.topic_id)
+            caption=combined, message_thread_id=node.topic_id or None)
     else:
-        # 先尝试 cache_media + send_media_group_v2 发缩略图相册；
-        # 若 Telegram 报 MEDIA_FILE_INVALID（常见于跨 DC 场景），
-        # 退化为只发第一张缩略图（与 single-thumb 模式一致），保证任务不中断。
-        try:
-            multi_media_raw = []
-            for m in media_list:
-                multi_media_raw.append(
-                    await cache_media(client, node.upload_telegram_chat_id, m))
-            sent = await send_media_group_v2(
-                client,
-                node.upload_telegram_chat_id,
-                multi_media_raw,
-                message_thread_id=node.topic_id)
-            photo_msg = sent[0] if sent else None
-        except Exception as e:
-            logger.warning(
-                f"thumbnail album failed ({e}), falling back to single photo")
-            photo_msg = await client.send_photo(
-                node.upload_telegram_chat_id, media_list[0].media,
-                caption=combined, message_thread_id=node.topic_id)
+        # 用 upload_client (bot) 做 UploadMedia + SendMultiMedia，
+        # 与 _flush_album_mode 保持一致，避免 user 账号跨 DC 问题
+        multi_media_raw = []
+        for m in media_list:
+            multi_media_raw.append(
+                await cache_media(upload_client, node.upload_telegram_chat_id, m))
+        sent = await send_media_group_v2(
+            upload_client,
+            node.upload_telegram_chat_id,
+            multi_media_raw,
+            message_thread_id=node.topic_id or None)
+        photo_msg = sent[0] if sent else None
 
     for f in thumb_files:
         try:
