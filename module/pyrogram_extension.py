@@ -1763,17 +1763,17 @@ async def process_multi_group(client, app, node, group_msgs, single_thumb: bool)
                     f"Failed to send photo album for mixed group")
                 photo_msg = None
 
-            if photo_msg and (photos or videos):
-                comment_media = []
-                for item in photos + videos:
-                    if item.photo:
-                        comment_media.append(pyrogram.types.InputMediaPhoto(
-                            media=item.photo.file_id, caption=""))
-                    elif item.video:
-                        comment_media.append(pyrogram.types.InputMediaVideo(
-                            media=item.video.file_id, caption="",
-                            width=item.video.width, height=item.video.height,
-                            duration=item.video.duration, supports_streaming=True))
+            if photo_msg and videos:
+                # 仅视频进评论区：图片已在主帖相册。若把图片混进评论区媒体组，
+                # 这张图片会导致 send_media_group 失败、被静默兜底 → 整条退到主频道
+                # （CLAUDE.md 规范也是"图片不进评论区"）。纯图片组 videos 为空，
+                # 不进此分支 → 评论区无内容（符合规范）。
+                comment_media = [
+                    pyrogram.types.InputMediaVideo(
+                        media=v.video.file_id, caption="",
+                        width=v.video.width, height=v.video.height,
+                        duration=v.video.duration, supports_streaming=True)
+                    for v in videos]
                 try:
                     disc = await _get_discussion_message_retry(
                         client, node.upload_telegram_chat_id, photo_msg.id)
@@ -1783,7 +1783,10 @@ async def process_multi_group(client, app, node, group_msgs, single_thumb: bool)
                         message_thread_id=node.topic_id or None)
                     for item in photos + videos:
                         node.stat_forward(ForwardStatus.SuccessForward)
-                except Exception:
+                except Exception as e:
+                    logger.warning(
+                        f"mixed-group comment send to discussion failed ({e}); "
+                        f"falling back to main channel for videos {[v.id for v in videos]}")
                     try:
                         await _send_media_or_single(
                             client, node.upload_telegram_chat_id, comment_media,
