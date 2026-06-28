@@ -1397,7 +1397,7 @@ async def forward_messages(
 # === NEW: /forward_multi & /forward_album support ===
 
 
-async def _get_discussion_message_retry(client, chat_id, message_id, retries: int = 3, delay: float = 2.0):
+async def _get_discussion_message_retry(client, chat_id, message_id, retries: int = 5, delay: float = 3.0):
     """带重试获取主帖对应的讨论区(评论区)消息。
 
     主帖刚发出时 Telegram 可能尚未把它同步到关联讨论组，立即获取会抛异常；
