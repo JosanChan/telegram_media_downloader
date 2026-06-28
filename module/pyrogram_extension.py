@@ -2332,4 +2332,6 @@ def _clean_caption(text: str) -> str:
     if not text:
         return text
     text = re.sub(r'\n?\s*火爆指数：[^\n]*\n?', '', text).strip()
+    # 删除末尾推广："剩下{N}V点 <URL>"（N 可变，删到 URL 结束）
+    text = re.sub(r'\n?\s*剩下\d+V点\s*https?://\S+', '', text).strip()
     return text

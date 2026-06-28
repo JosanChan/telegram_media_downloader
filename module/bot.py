@@ -995,6 +995,7 @@ async def forward_message_impl(
             seen_multi_groups: set = set()
             seen_skip_groups: set = set()
             skipped_screenshot_ids: list = []
+            skipped_multi_ids: list = []
             async for item in get_chat_history_v2(  # type: ignore
                 _bot.client,
                 node.chat_id,
@@ -1027,6 +1028,10 @@ async def forward_message_impl(
                             _bot.client, _bot.app, node, group_msgs, node.forward_multi_single_thumb
                         )
                     else:
+                        # 排除单图 / 纯文字消息（仅保留视频、文档等），记录 ID 供汇总
+                        if item.photo or not item.media:
+                            skipped_multi_ids.append(item.id)
+                            continue
                         await process_multi_single_msg(_bot.client, _bot.app, node, item)
                     await report_bot_status(client, node)
                     if node.is_stop_transmission:
@@ -1060,6 +1065,14 @@ async def forward_message_impl(
                     message.from_user.id,
                     f"⚠️ 已跳过 {len(skipped_screenshot_ids)} 个媒体组"
                     f"（/forward_screenshot 仅处理单条视频），消息 ID：{ids_str}",
+                )
+
+            if skipped_multi_ids:
+                ids_str = ", ".join(str(x) for x in skipped_multi_ids)
+                await client.send_message(
+                    message.from_user.id,
+                    f"⚠️ 已跳过 {len(skipped_multi_ids)} 条单图/纯文字消息"
+                    f"（/forward_multi 已设为排除），消息 ID：{ids_str}",
                 )
 
             if node.failed_forward_ids:
