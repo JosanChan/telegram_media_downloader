@@ -1462,11 +1462,11 @@ async def process_multi_single_msg(client, app, node, item):
             except Exception:
                 logger.warning(
                     f"Both clients failed to send thumbnail for msg {item.id}, "
-                    f"sending text instead")
-                photo_msg = await upload_client.send_message(
-                    node.upload_telegram_chat_id,
-                    caption or "视频详见评论区👇",
-                    message_thread_id=node.topic_id or None)
+                    f"skipping")
+                node.failed_forward_ids.append(item.id)
+                node.stat_forward(ForwardStatus.FailedForward)
+                await report_bot_status(node.bot, node, immediate_reply=True)
+                return
             finally:
                 try:
                     os.remove(thumb_path)
