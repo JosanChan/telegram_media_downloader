@@ -1459,6 +1459,14 @@ async def process_multi_single_msg(client, app, node, item):
                     photo_msg = await client.send_photo(
                         node.upload_telegram_chat_id, thumb_path,
                         caption=caption, message_thread_id=node.topic_id or None)
+            except Exception:
+                logger.warning(
+                    f"Both clients failed to send thumbnail for msg {item.id}, "
+                    f"sending text instead")
+                photo_msg = await upload_client.send_message(
+                    node.upload_telegram_chat_id,
+                    caption or "视频详见评论区👇",
+                    message_thread_id=node.topic_id or None)
             finally:
                 try:
                     os.remove(thumb_path)
