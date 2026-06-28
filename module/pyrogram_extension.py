@@ -1689,16 +1689,19 @@ async def process_multi_group(client, app, node, group_msgs, single_thumb: bool)
                 try:
                     disc = await _get_discussion_message_retry(
                         client, node.upload_telegram_chat_id, photo_msg.id)
-                    await _send_media_or_single(
-                        client, disc.chat.id, comment_media,
+                    await _send_media_batched(
+                        client, disc.chat.id, comment_media, 3,
                         reply_to_message_id=disc.id,
                         message_thread_id=node.topic_id or None)
                     for v in videos:
                         node.stat_forward(ForwardStatus.SuccessForward)
-                except Exception:
+                except Exception as e:
+                    logger.warning(
+                        f"pure-video comment send to discussion failed ({e}); "
+                        f"falling back to main channel for videos {[v.id for v in videos]}")
                     try:
-                        await _send_media_or_single(
-                            client, node.upload_telegram_chat_id, comment_media,
+                        await _send_media_batched(
+                            client, node.upload_telegram_chat_id, comment_media, 3,
                             reply_to_message_id=photo_msg.id,
                             message_thread_id=node.topic_id or None)
                         for v in videos:
@@ -2351,6 +2354,13 @@ async def _send_media_or_single(client, chat_id, media_list, **kwargs):
                 caption=single.caption, **kwargs)
     else:
         await client.send_media_group(chat_id, media_list, **kwargs)
+
+
+async def _send_media_batched(client, chat_id, media_list, batch_size, **kwargs):
+    """按 batch_size 分批发送（send_media_group 单批上限 10；分小批更稳，可规避
+    大批一次性发送失败）。每批用相同 kwargs，都挂在同一锚点(如同一条 reply_to)下。"""
+    for i in range(0, len(media_list), batch_size):
+        await _send_media_or_single(client, chat_id, media_list[i:i + batch_size], **kwargs)
 
 
 def _clean_caption(text: str) -> str:
