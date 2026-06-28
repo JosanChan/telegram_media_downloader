@@ -1397,7 +1397,7 @@ async def forward_messages(
 # === NEW: /forward_multi & /forward_album support ===
 
 
-async def _get_discussion_message_retry(client, chat_id, message_id, retries: int = 7, delay: float = 3.0):
+async def _get_discussion_message_retry(client, chat_id, message_id, retries: int = 4, delay: float = 2.0):
     """带重试获取主帖对应的讨论区(评论区)消息。
 
     两类失败都覆盖：
@@ -1416,12 +1416,17 @@ async def _get_discussion_message_retry(client, chat_id, message_id, retries: in
                 return await client.get_discussion_message(chat_id, mid)
             except Exception as e:
                 last_exc = e
-        # 首轮全失败后，把同相册的所有消息 id 纳入候选再试（锚点可能不是第一条）
+        # 首次失败即取相册全部消息 id，并在本轮立即尝试新增的那些（不等 sleep）
         if not tried_group:
             tried_group = True
             try:
                 grp = await client.get_media_group(chat_id, message_id)
                 ids = [m.id for m in grp]
+                for mid in [i for i in ids if i not in candidate_ids]:
+                    try:
+                        return await client.get_discussion_message(chat_id, mid)
+                    except Exception as e:
+                        last_exc = e
                 if ids:
                     candidate_ids = ids
             except Exception:
@@ -1707,7 +1712,7 @@ async def process_multi_group(client, app, node, group_msgs, single_thumb: bool)
                     disc = await _get_discussion_message_retry(
                         client, node.upload_telegram_chat_id, photo_msg.id)
                     await _send_media_batched(
-                        client, disc.chat.id, comment_media, 3,
+                        client, disc.chat.id, comment_media, 10,
                         reply_to_message_id=disc.id,
                         message_thread_id=node.topic_id or None)
                     for v in videos:
@@ -1718,7 +1723,7 @@ async def process_multi_group(client, app, node, group_msgs, single_thumb: bool)
                         f"falling back to main channel for videos {[v.id for v in videos]}")
                     try:
                         await _send_media_batched(
-                            client, node.upload_telegram_chat_id, comment_media, 3,
+                            client, node.upload_telegram_chat_id, comment_media, 10,
                             reply_to_message_id=photo_msg.id,
                             message_thread_id=node.topic_id or None)
                         for v in videos:
