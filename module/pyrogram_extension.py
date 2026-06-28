@@ -1425,6 +1425,8 @@ async def process_multi_single_msg(client, app, node, item):
     """forward_multi 单条消息处理（无媒体组）
     视频 → 缩略图主帖 + 评论区视频；图片/其他 → 直接复制转发
     """
+    if node.is_stop_transmission:
+        return
     await app.forward_limit_call.wait(node)
     upload_client = node.upload_user or client
 
@@ -1498,6 +1500,8 @@ async def process_multi_group(client, app, node, group_msgs, single_thumb: bool)
     single_thumb=False: 图片→相册主帖；纯视频组→回退单缩略图；视频→评论区
     """
     import pyrogram
+    if node.is_stop_transmission:
+        return
     await app.forward_limit_call.wait(node)
     upload_client = node.upload_user or client
 

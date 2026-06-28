@@ -200,6 +200,7 @@ class TaskNode:
         return self.is_stop_transmission or (
             self.is_running
             and self.task_type != TaskType.ListenForward
+            and self.total_task > 0
             and self.total_task == self.total_download_task
         )
 

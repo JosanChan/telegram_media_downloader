@@ -127,6 +127,25 @@ Telegram 的 `file_reference` 有效期有限，在 buffer 模式中累积消息
 
 `_flush_album_mode` 中下载视频/文档到本地后，所有临时路径需追加到 `temp_files` 列表，函数结束时统一删除。`temp_files = []` 必须在函数最开头初始化，否则 `NameError` 会被 except 静默吞掉，导致所有视频下载静默失败。
 
+### 6. 双计数体系 / multi 任务的完成判定与停止
+
+`TaskNode` 有两套**互不相通**的计数：
+
+- **下载体系**：`total_task`（仅 `add_download_task` +1）/ `total_download_task`（仅 `node.stat()` +1）。这是 `is_finish()` 的**唯一判据**。
+- **转发统计**：`total_forward_task` / `success|failed|skip_forward_task`，由 `node.stat_forward()` 更新，**仅供 `report_bot_status` 显示**，不参与 `is_finish()`。
+
+multi / screenshot / album / clone 路径只调 `stat_forward()`，**从不更新 `total_task`**，故这些任务 `total_task` 恒为 0。
+
+**陷阱**：`is_finish()` 若用 `total_task == total_download_task`（0 == 0）会把运行中的 multi 任务误判为"已完成"，后台 `Application.update_reply_message`（每 3 秒）据此 `remove_task_node`，导致 ①任务几秒后从 `_bot.task_node` 消失 → Stop Forward 菜单列不出 → **无法停止**；②进度反馈停更。修复：`is_finish()` 加 `total_task > 0` 前置条件（已落地 `app.py`）。运行中 multi 任务因此 `is_finish()=False` 不被清理；正常结束时 `forward_message_impl` 的 finally 调 `node.stop_transmission()` 使其 `is_finish()=True` 被正常清理。
+
+**停止响应粒度**：`forward_message_impl` 主循环在每条消息/每组**处理前后**检查 `node.is_stop_transmission`（`bot.py`），`process_multi_single_msg` / `process_multi_group` 入口也各有一道检查。但单个媒体组**内部**（评论区逐条上传）不中断，故 stop 最多延迟"一个媒体组的处理时间"才生效——这是正常现象，不是没停。
+
+### 7. `get_chat_history_v2` 分页陷阱（reverse 模式）
+
+- `node.limit = end_offset_id - offset_id + 1`（`bot.py` `get_forward_task_node`）是 **ID 跨度**，不是真实消息数；它被当作迭代器的 `total` 上限。频道有 ID 空洞（删除/服务消息）时真实消息数 < 跨度。
+- reverse 模式到达范围/频道末尾后，`GetHistory` 因 `add_offset` 负偏移被服务端 **clamp**，会**重复返回最新窗口而非空列表**，`offset_id` 不再前进 → 仅靠 `current >= total` 兜底，期间会**反复转发最后一批**。
+- 修复（已落地 `get_chat_history_v2.py`）：reverse 模式下若本轮 `messages[-1].id < 请求起点` 则 `return`（stall detection）；并对 yield 的消息按 `[start_id, max_id]` 过滤，防止空洞锚点漂移泄漏越界消息。
+
 ---
 
 ## 五、主要模块职责
@@ -136,7 +155,7 @@ Telegram 的 `file_reference` 有效期有限，在 buffer 模式中累积消息
 | `module/bot.py` | 命令注册、消息路由、`forward_message_impl` 主循环 |
 | `module/pyrogram_extension.py` | 所有自定义转发逻辑：`process_multi_single_msg`、`process_multi_group`、`_flush_album_mode`、`forward_clone_impl`、`forward_screenshot_split_group` 等 |
 | `module/send_media_group_v2.py` | 低层封装：`cache_media()`（预注册媒体）+ `send_media_group_v2()`（直调 `SendMultiMedia`） |
-| `module/task_node.py` | `TaskNode` 数据类，存储转发任务的全部状态 |
+| `module/app.py` | `TaskNode` 数据类（**注意在 app.py，不在 task_node.py**），存储转发任务全部状态；双计数体系与 `is_finish()`；`Application.update_reply_message` 后台清理循环 |
 | `utils/format.py` | 文本格式化工具 |
 
 ---
