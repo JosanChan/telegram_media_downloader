@@ -1003,6 +1003,7 @@ async def forward_message_impl(
                 offset_id=offset_id,
                 reverse=True,
             ):
+                logger.info(f"[forward_message_impl] yielded msg {item.id}")
                 if node.forward_album_mode:
                     if node.is_stop_transmission:
                         break
