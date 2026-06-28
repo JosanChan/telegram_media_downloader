@@ -30,7 +30,7 @@ async def get_chunk_v2(
                 peer=await client.resolve_peer(chat_id),
                 offset_id=from_message_id,
                 offset_date=utils.datetime_to_timestamp(from_date),
-                add_offset=offset * (-1 if reverse else 1) - (limit if reverse else 0),
+                add_offset=offset * (-1 if reverse else 1) - ((limit - 1) if reverse else 0),
                 limit=limit,
                 max_id=max_id,
                 min_id=0,
@@ -76,16 +76,7 @@ async def get_chat_history_v2(
         )
 
         if not messages:
-            break_count = offset_id - 1
-            async for message in self.get_chat_history(chat_id):
-                if break_count:
-                    break_count -= 1
-                    continue
-                if len(messages) >= limit + 1:
-                    break
-                messages.append(message)
-            if not messages:
-                return
+            return
 
         offset_id = messages[-1].id + (1 if reverse else 0)
 
