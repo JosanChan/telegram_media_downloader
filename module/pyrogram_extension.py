@@ -2389,6 +2389,252 @@ def _clean_caption(text: str) -> str:
     if not text:
         return text
     text = re.sub(r'\n?\s*火爆指数：[^\n]*\n?', '', text).strip()
+    text = re.sub(r'\n?\s*剩下\d+V点\s*https?://\S+', '', text).strip()
+    text = re.sub(r'\s*📱{3,}[\s\S]*$', '', text).strip()
+    return text
+
+
+async def forward_code_impl(
+    client: pyrogram.Client,
+    app: Application,
+    node: TaskNode,
+    bot_chat_id: int,
+    code: str,
+) -> list:
+    """通过提取码从 Bot 获取资源并转发到目标频道"""
+    await client.send_message(bot_chat_id, f"/start {code}")
+    logger.info(f"[forward_code] sent /start {code} to {bot_chat_id}")
+
+    resources = []
+    async for msg in _poll_code_replies(client, bot_chat_id, timeout=30):
+        resources.append(msg)
+
+    logger.info(f"[forward_code] collected {len(resources)} resource messages for code {code}")
+
+    if not resources:
+        node.stat_forward(ForwardStatus.FailedForward)
+        return []
+
+    failed_ids = await _upload_code_resources(client, node, resources)
+
+    for msg in resources:
+        if msg.id in failed_ids:
+            node.stat_forward(ForwardStatus.FailedForward)
+        else:
+            node.stat_forward(ForwardStatus.SuccessForward)
+
+    return failed_ids
+
+
+async def _poll_code_replies(
+    client: pyrogram.Client,
+    bot_chat_id: int,
+    timeout: int = 30,
+):
+    """轮询 bot 私聊，收集回复中的媒体消息，处理翻页"""
+    poll_interval = 2
+    start_time = time.time()
+    last_seen_id = 0
+    done = False
+
+    while time.time() - start_time < timeout and not done:
+        await asyncio.sleep(poll_interval)
+
+        try:
+            msgs = [m async for m in client.get_chat_history(bot_chat_id, limit=10)]
+        except Exception as e:
+            logger.warning(f"[forward_code] poll error: {e}")
+            continue
+
+        for msg in msgs:
+            if msg.id <= last_seen_id:
+                continue
+            if msg.sender_id != bot_chat_id:
+                continue
+            if msg.id > last_seen_id:
+                last_seen_id = msg.id
+
+            text = (msg.text or msg.caption or "").strip()
+
+            if "已全部获取" in text:
+                done = True
+                break
+
+            if "检测到共" in text and "个资源" in text:
+                continue
+
+            if msg.media:
+                yield msg
+
+            if msg.reply_markup:
+                clicked = False
+                for row in msg.reply_markup.inline_keyboard:
+                    for btn in row:
+                        if "下一页" in btn.text:
+                            try:
+                                await client.request_callback_answer(
+                                    bot_chat_id, msg.id, btn.callback_data
+                                )
+                                clicked = True
+                                start_time = time.time()
+                                logger.info(f"[forward_code] clicked 下一页 on msg {msg.id}")
+                            except Exception as e:
+                                logger.warning(f"[forward_code] click 下一页 failed: {e}")
+                            break
+                    if clicked:
+                        break
+
+
+async def _upload_code_resources(
+    client: pyrogram.Client,
+    node: TaskNode,
+    resources: list,
+) -> list:
+    """下载资源消息的文件并上传到目标频道"""
+    upload_user = node.upload_user or client
+    target_chat = node.upload_telegram_chat_id
+    temp_files = []
+    failed_ids = []
+    uploaded_ids = node.forward_code_uploaded_ids
+
+    groups = {}
+    singles = []
+    for msg in resources:
+        if msg.media_group_id:
+            groups.setdefault(msg.media_group_id, []).append(msg)
+        else:
+            singles.append(msg)
+
+    async def _upload_single(msg, file_path, file_unique_id):
+        if file_unique_id and file_unique_id in uploaded_ids:
+            logger.info(f"[forward_code] skip duplicate: {file_unique_id}")
+            return True
+
+        caption = _clean_caption(msg.caption or "")
+        try:
+            if msg.photo:
+                await upload_user.send_photo(target_chat, file_path, caption=caption)
+            elif msg.video:
+                await upload_user.send_video(
+                    target_chat, file_path, caption=caption,
+                    width=msg.video.width, height=msg.video.height,
+                    duration=msg.video.duration, supports_streaming=True,
+                )
+            elif msg.document:
+                await upload_user.send_document(
+                    target_chat, file_path, caption=caption,
+                    file_name=getattr(msg.document, "file_name", None),
+                )
+            elif msg.audio:
+                await upload_user.send_audio(target_chat, file_path, caption=caption)
+            elif msg.voice:
+                await upload_user.send_voice(target_chat, file_path, caption=caption)
+            elif msg.animation:
+                await upload_user.send_animation(target_chat, file_path, caption=caption)
+            elif msg.video_note:
+                await upload_user.send_video_note(target_chat, file_path)
+            else:
+                await upload_user.send_document(target_chat, file_path, caption=caption)
+
+            if file_unique_id:
+                uploaded_ids.add(file_unique_id)
+            return True
+        except Exception as e:
+            logger.warning(f"[forward_code] upload msg {msg.id} failed: {e}")
+            return False
+
+    for group_id, group_msgs in groups.items():
+        group_temp = []
+        group_ok = True
+
+        for msg in group_msgs:
+            try:
+                file_path = await client.download_media(msg)
+                if not file_path:
+                    raise Exception("download_media returned None")
+                temp_files.append(file_path)
+                group_temp.append(file_path)
+            except Exception as e:
+                logger.warning(f"[forward_code] download msg {msg.id} failed: {e}")
+                failed_ids.append(msg.id)
+                group_ok = False
+
+        if not group_ok:
+            continue
+
+        media_list = []
+        for i, msg in enumerate(group_msgs):
+            file_path = group_temp[i]
+            caption = _clean_caption(msg.caption or "")
+            if msg.photo:
+                media_list.append(types.InputMediaPhoto(file_path, caption=caption))
+            elif msg.video:
+                media_list.append(types.InputMediaVideo(
+                    file_path, caption=caption,
+                    width=msg.video.width, height=msg.video.height,
+                    duration=msg.video.duration, supports_streaming=True,
+                ))
+            else:
+                media_list.append(types.InputMediaDocument(file_path, caption=caption))
+
+        if media_list:
+            try:
+                if len(media_list) == 1:
+                    await _upload_single(
+                        group_msgs[0], group_temp[0],
+                        (getattr(group_msgs[0], 'photo', None) or
+                         getattr(group_msgs[0], 'video', None) or
+                         getattr(group_msgs[0], 'document', None)
+                         ).file_unique_id if (getattr(group_msgs[0], 'photo', None) or
+                            getattr(group_msgs[0], 'video', None) or
+                            getattr(group_msgs[0], 'document', None)) else None,
+                    )
+                else:
+                    await upload_user.send_media_group(target_chat, media_list)
+                    for msg in group_msgs:
+                        uid = (getattr(getattr(msg, 'photo', None), 'file_unique_id', None)
+                               or getattr(getattr(msg, 'video', None), 'file_unique_id', None)
+                               or getattr(getattr(msg, 'document', None), 'file_unique_id', None))
+                        if uid:
+                            uploaded_ids.add(uid)
+            except Exception as e:
+                logger.warning(f"[forward_code] send_media_group failed for group {group_id}: {e}, falling back")
+                for i, msg in enumerate(group_msgs):
+                    uid = (getattr(getattr(msg, 'photo', None), 'file_unique_id', None)
+                           or getattr(getattr(msg, 'video', None), 'file_unique_id', None)
+                           or getattr(getattr(msg, 'document', None), 'file_unique_id', None))
+                    ok = await _upload_single(msg, group_temp[i], uid)
+                    if not ok:
+                        failed_ids.append(msg.id)
+
+    for msg in singles:
+        try:
+            file_path = await client.download_media(msg)
+            if not file_path:
+                raise Exception("download_media returned None")
+            temp_files.append(file_path)
+        except Exception as e:
+            logger.warning(f"[forward_code] download msg {msg.id} failed: {e}")
+            failed_ids.append(msg.id)
+            continue
+
+        uid = (getattr(getattr(msg, 'photo', None), 'file_unique_id', None)
+               or getattr(getattr(msg, 'video', None), 'file_unique_id', None)
+               or getattr(getattr(msg, 'document', None), 'file_unique_id', None))
+
+        ok = await _upload_single(msg, file_path, uid)
+        if not ok:
+            failed_ids.append(msg.id)
+
+    for f in temp_files:
+        try:
+            if os.path.isfile(f):
+                os.remove(f)
+        except Exception:
+            pass
+
+    return failed_ids
+    text = re.sub(r'\n?\s*火爆指数：[^\n]*\n?', '', text).strip()
     # 删除末尾推广："剩下{N}V点 <URL>"（N 可变，删到 URL 结束）
     text = re.sub(r'\n?\s*剩下\d+V点\s*https?://\S+', '', text).strip()
     # 删除末尾固定导航广告块：从第一处连续 >=3 个 📱 起，删到文末

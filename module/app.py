@@ -138,6 +138,8 @@ class TaskNode:
         forward_album_mode: bool = False,
         forward_multi_single_thumb: bool = True,
         forward_video_screenshot: bool = False,
+        forward_code_mode: bool = False,
+        source_bot_chat_id: int = 0,
     ):
         self.chat_id = chat_id
         self.from_user_id = from_user_id
@@ -174,6 +176,8 @@ class TaskNode:
         self.forward_multi_buffer = []
         self.forward_multi_captions = []
         self.forward_video_screenshot = forward_video_screenshot
+        self.forward_code_mode = forward_code_mode
+        self.source_bot_chat_id = source_bot_chat_id
         self.client = None
         self.upload_success_count: int = 0
         self.is_stop_transmission = False
@@ -184,6 +188,7 @@ class TaskNode:
         self.topic_id = topic_id
         self.reply_to_message = None
         self.cloud_drive_upload_stat_dict: dict = {}
+        self.forward_code_uploaded_ids: set = set()
 
     def skip_msg_id(self, msg_id: int):
         """Skip if message id out of range"""

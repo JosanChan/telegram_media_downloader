@@ -30,6 +30,7 @@ from module.language import Language, _t
 from module.pyrogram_extension import (
     check_user_permission,
     forward_clone_impl,
+    forward_code_impl,
     parse_link,
     proc_cache_forward,
     process_multi_group,
@@ -270,6 +271,13 @@ class DownloadBot:
             MessageHandler(
                 forward_clone_handler,
                 filters=pyrogram.filters.command(["forward_clone"])
+                & pyrogram.filters.user(self.allowed_user_ids),
+            )
+        )
+        self.bot.add_handler(
+            MessageHandler(
+                forward_code_handler,
+                filters=pyrogram.filters.command(["forward_code"])
                 & pyrogram.filters.user(self.allowed_user_ids),
             )
         )
@@ -1216,6 +1224,65 @@ async def forward_clone_handler(client: pyrogram.Client, message: pyrogram.types
             pass
     finally:
         await report_bot_status(client, node, immediate_reply=True)
+        node.stop_transmission()
+
+
+async def forward_code_handler(client: pyrogram.Client, message: pyrogram.types.Message):
+    """通过提取码从 Bot 获取资源并转发到目标频道"""
+    args = message.text.split(maxsplit=4)
+    if len(args) < 4:
+        await client.send_message(
+            message.from_user.id,
+            "用法: /forward_code <bot_link> <target_channel> <extract_code>\n"
+            "例: /forward_code https://t.me/TPKanKan_bot https://t.me/c/xxxxx 17f8f0ec",
+        )
+        return
+
+    bot_link = args[1]
+    dst_link = args[2]
+    code = args[3]
+
+    node = await get_forward_task_node(
+        client, message, TaskType.Forward,
+        bot_link, dst_link, 0, 0, None, False,
+        multi_mode=False, album_mode=False,
+    )
+    if not node:
+        return
+
+    node.forward_code_mode = True
+
+    try:
+        bot_entity = await _bot.client.get_chat(bot_link)
+        bot_chat_id = bot_entity.id
+    except Exception as e:
+        await client.edit_message_text(
+            node.from_user_id, node.reply_message_id,
+            f"❌ 无法获取 Bot: {e}",
+        )
+        node.stop_transmission()
+        return
+
+    node.source_bot_chat_id = bot_chat_id
+    node.is_running = True
+
+    try:
+        failed_ids = await forward_code_impl(
+            _bot.client, _bot.app, node, bot_chat_id, code,
+        )
+        total_media = node.total_forward_task
+        success = node.success_forward_task
+        failed = node.failed_forward_task
+        report = f"✅ 提取码 {code} 处理完成\n总资源: {total_media}\n成功: {success}\n失败: {failed}"
+        if failed_ids:
+            report += f"\n失败消息 ID: {', '.join(str(x) for x in failed_ids)}"
+        await client.send_message(node.from_user_id, report)
+    except Exception as e:
+        logger.exception(f"forward_code_handler error: {e}")
+        await client.send_message(
+            node.from_user_id, f"❌ 处理失败: {e}",
+        )
+    finally:
         node.stop_transmission()
 
 
