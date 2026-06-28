@@ -1400,21 +1400,38 @@ async def forward_messages(
 async def _get_discussion_message_retry(client, chat_id, message_id, retries: int = 7, delay: float = 3.0):
     """带重试获取主帖对应的讨论区(评论区)消息。
 
-    主帖刚发出时 Telegram 可能尚未把它同步到关联讨论组，立即获取会抛异常；
-    重试给同步留出时间。重试用尽仍失败则记录日志后抛出，由调用方决定兜底
-    （此前是静默 except 直接转主频道，导致视频误入频道却无任何日志）。
+    两类失败都覆盖：
+    1) 主帖刚发出、评论锚点尚未同步 → 重试给时间；
+    2) 相册(媒体组)帖只有其中一条是讨论锚点，send_media_group 返回的第一条
+       不一定是它，用错会 MSG_ID_INVALID → 用 get_media_group 取同相册全部
+       消息 id，逐条尝试，直到命中锚点那条。
+    重试用尽仍失败则记录日志后抛出，由调用方兜底。
     """
     last_exc = None
+    candidate_ids = [message_id]
+    tried_group = False
     for attempt in range(retries):
-        try:
-            return await client.get_discussion_message(chat_id, message_id)
-        except Exception as e:
-            last_exc = e
-            if attempt < retries - 1:
-                await asyncio.sleep(delay)
+        for mid in candidate_ids:
+            try:
+                return await client.get_discussion_message(chat_id, mid)
+            except Exception as e:
+                last_exc = e
+        # 首轮全失败后，把同相册的所有消息 id 纳入候选再试（锚点可能不是第一条）
+        if not tried_group:
+            tried_group = True
+            try:
+                grp = await client.get_media_group(chat_id, message_id)
+                ids = [m.id for m in grp]
+                if ids:
+                    candidate_ids = ids
+            except Exception:
+                pass
+        if attempt < retries - 1:
+            await asyncio.sleep(delay)
     logger.warning(
         f"get_discussion_message failed for post {message_id} in chat {chat_id} "
-        f"after {retries} tries ({last_exc}); falling back to main channel"
+        f"after {retries} tries over ids {candidate_ids} ({last_exc}); "
+        f"falling back to main channel"
     )
     raise last_exc
 
