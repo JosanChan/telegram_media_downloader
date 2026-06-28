@@ -584,8 +584,8 @@ async def _upload_telegram_chat_message(
                             message_thread_id=node.topic_id,
                         )
                     try:
-                        disc = await client.get_discussion_message(
-                            node.upload_telegram_chat_id, photo_msg.id
+                        disc = await _get_discussion_message_retry(
+                            client, node.upload_telegram_chat_id, photo_msg.id
                         )
                         await message.copy(
                             disc.chat.id,
@@ -1397,6 +1397,28 @@ async def forward_messages(
 # === NEW: /forward_multi & /forward_album support ===
 
 
+async def _get_discussion_message_retry(client, chat_id, message_id, retries: int = 3, delay: float = 2.0):
+    """带重试获取主帖对应的讨论区(评论区)消息。
+
+    主帖刚发出时 Telegram 可能尚未把它同步到关联讨论组，立即获取会抛异常；
+    重试给同步留出时间。重试用尽仍失败则记录日志后抛出，由调用方决定兜底
+    （此前是静默 except 直接转主频道，导致视频误入频道却无任何日志）。
+    """
+    last_exc = None
+    for attempt in range(retries):
+        try:
+            return await client.get_discussion_message(chat_id, message_id)
+        except Exception as e:
+            last_exc = e
+            if attempt < retries - 1:
+                await asyncio.sleep(delay)
+    logger.warning(
+        f"get_discussion_message failed for post {message_id} in chat {chat_id} "
+        f"after {retries} tries ({last_exc}); falling back to main channel"
+    )
+    raise last_exc
+
+
 async def _copy_item(node, item, chat_id, **kwargs):
     """Copy a buffered message to target chat, tracking forward stats."""
     try:
@@ -1481,8 +1503,8 @@ async def process_multi_single_msg(client, app, node, item):
                 message_thread_id=node.topic_id or None)
 
         try:
-            disc = await client.get_discussion_message(
-                node.upload_telegram_chat_id, photo_msg.id)
+            disc = await _get_discussion_message_retry(
+                client, node.upload_telegram_chat_id, photo_msg.id)
             await _copy_item(node, item, disc.chat.id,
                 reply_to_message_id=disc.id, caption="")
         except Exception:
@@ -1575,8 +1597,8 @@ async def process_multi_group(client, app, node, group_msgs, single_thumb: bool)
         # 全部图片+视频都进评论区
         all_media = photos + videos
         try:
-            disc = await client.get_discussion_message(
-                node.upload_telegram_chat_id, photo_msg.id)
+            disc = await _get_discussion_message_retry(
+                client, node.upload_telegram_chat_id, photo_msg.id)
             for msg in all_media:
                 try:
                     await _copy_item(node, msg, disc.chat.id,
@@ -1665,8 +1687,8 @@ async def process_multi_group(client, app, node, group_msgs, single_thumb: bool)
                         duration=v.video.duration, supports_streaming=True)
                     for v in videos]
                 try:
-                    disc = await client.get_discussion_message(
-                        node.upload_telegram_chat_id, photo_msg.id)
+                    disc = await _get_discussion_message_retry(
+                        client, node.upload_telegram_chat_id, photo_msg.id)
                     await _send_media_or_single(
                         client, disc.chat.id, comment_media,
                         reply_to_message_id=disc.id,
@@ -1753,8 +1775,8 @@ async def process_multi_group(client, app, node, group_msgs, single_thumb: bool)
                             width=item.video.width, height=item.video.height,
                             duration=item.video.duration, supports_streaming=True))
                 try:
-                    disc = await client.get_discussion_message(
-                        node.upload_telegram_chat_id, photo_msg.id)
+                    disc = await _get_discussion_message_retry(
+                        client, node.upload_telegram_chat_id, photo_msg.id)
                     await _send_media_or_single(
                         client, disc.chat.id, comment_media,
                         reply_to_message_id=disc.id,
@@ -1812,8 +1834,8 @@ async def _flush_single_thumb(client, app, node, items):
         pass
 
     try:
-        disc = await client.get_discussion_message(
-            node.upload_telegram_chat_id, photo_msg.id)
+        disc = await _get_discussion_message_retry(
+            client, node.upload_telegram_chat_id, photo_msg.id)
         for item in items:
             await _copy_item(node, item, disc.chat.id,
                 reply_to_message_id=disc.id,
@@ -1882,8 +1904,8 @@ async def _flush_multi_thumb(client, app, node, items):
 
     if photo_msg:
         try:
-            disc = await client.get_discussion_message(
-                node.upload_telegram_chat_id, photo_msg.id)
+            disc = await _get_discussion_message_retry(
+                client, node.upload_telegram_chat_id, photo_msg.id)
             for item in items:
                 await _copy_item(node, item, disc.chat.id,
                     reply_to_message_id=disc.id,
@@ -2151,8 +2173,8 @@ async def forward_screenshot_split_group(client, upload_user, app, node, group_m
         # ── 发评论区 ────────────────────────────────────────────
         if comment_msgs:
             try:
-                disc = await client.get_discussion_message(
-                    node.upload_telegram_chat_id, dst_post.id
+                disc = await _get_discussion_message_retry(
+                    client, node.upload_telegram_chat_id, dst_post.id
                 )
                 for msg in comment_msgs:
                     await app.forward_limit_call.wait(node)
