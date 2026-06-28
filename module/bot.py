@@ -1253,7 +1253,8 @@ async def forward_code_handler(client: pyrogram.Client, message: pyrogram.types.
     node.forward_code_mode = True
 
     try:
-        bot_entity = await _bot.client.get_chat(bot_link)
+        bot_chat_id_or_username, _, _ = await parse_link(_bot.client, bot_link)
+        bot_entity = await _bot.client.get_chat(bot_chat_id_or_username)
         bot_chat_id = bot_entity.id
     except Exception as e:
         await client.edit_message_text(
