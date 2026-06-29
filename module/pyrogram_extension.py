@@ -2449,7 +2449,7 @@ async def _poll_code_replies(
         for msg in msgs:
             if msg.id <= last_seen_id:
                 continue
-            if msg.sender_id != bot_chat_id:
+            if not msg.from_user or msg.from_user.id != bot_chat_id:
                 continue
             if msg.id > last_seen_id:
                 last_seen_id = msg.id
