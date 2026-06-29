@@ -2445,6 +2445,7 @@ async def _poll_code_replies(
             logger.warning(f"[forward_code] poll error: {e}")
             continue
 
+        all_done = False
         for msg in msgs:
             if msg.id <= last_seen_id:
                 continue
@@ -2455,8 +2456,8 @@ async def _poll_code_replies(
             text = (msg.text or msg.caption or "").strip()
 
             if "已全部获取" in text:
-                logger.info(f"[forward_code] detected '全部获取', stopping")
-                return resources
+                all_done = True
+                continue
 
             if "检测到共" in text and "个资源" in text:
                 continue
@@ -2464,7 +2465,7 @@ async def _poll_code_replies(
             if msg.media:
                 resources.append(msg)
 
-            if msg.reply_markup:
+            if msg.reply_markup and not all_done:
                 for row in msg.reply_markup.inline_keyboard:
                     for btn in row:
                         if "下一页" in btn.text:
@@ -2477,6 +2478,9 @@ async def _poll_code_replies(
                             except Exception as e:
                                 logger.warning(f"[forward_code] click 下一页 failed: {e}")
                             break
+
+        if all_done:
+            return resources
 
     logger.info(f"[forward_code] poll timeout reached")
     return resources
