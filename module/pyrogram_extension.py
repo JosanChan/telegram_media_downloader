@@ -2405,9 +2405,7 @@ async def forward_code_impl(
     await client.send_message(bot_chat_id, f"/start {code}")
     logger.info(f"[forward_code] sent /start {code} to {bot_chat_id}")
 
-    resources = []
-    async for msg in _poll_code_replies(client, bot_chat_id, timeout=30):
-        resources.append(msg)
+    resources = await _poll_code_replies(client, bot_chat_id, timeout=30)
 
     logger.info(f"[forward_code] collected {len(resources)} resource messages for code {code}")
 
@@ -2430,17 +2428,17 @@ async def _poll_code_replies(
     client: pyrogram.Client,
     bot_chat_id: int,
     timeout: int = 30,
-):
+) -> list:
     """轮询 bot 私聊，收集回复中的媒体消息，处理翻页"""
     poll_interval = 2
     start_time = time.time()
     last_seen_id = 0
-    done = False
+    resources = []
 
-    while time.time() - start_time < timeout and not done:
+    while time.time() - start_time < timeout:
         await asyncio.sleep(poll_interval)
         elapsed = time.time() - start_time
-        logger.info(f"[forward_code] poll cycle, elapsed={elapsed:.1f}s, done={done}")
+        logger.info(f"[forward_code] poll cycle, elapsed={elapsed:.1f}s")
 
         try:
             msgs = [m async for m in client.get_chat_history(bot_chat_id, limit=10)]
@@ -2461,17 +2459,16 @@ async def _poll_code_replies(
             text = (msg.text or msg.caption or "").strip()
 
             if "已全部获取" in text:
-                done = True
-                break
+                logger.info(f"[forward_code] detected '全部获取', stopping")
+                return resources
 
             if "检测到共" in text and "个资源" in text:
                 continue
 
             if msg.media:
-                yield msg
+                resources.append(msg)
 
             if msg.reply_markup:
-                clicked = False
                 for row in msg.reply_markup.inline_keyboard:
                     for btn in row:
                         if "下一页" in btn.text:
@@ -2479,14 +2476,14 @@ async def _poll_code_replies(
                                 await client.request_callback_answer(
                                     bot_chat_id, msg.id, btn.callback_data
                                 )
-                                clicked = True
                                 start_time = time.time()
                                 logger.info(f"[forward_code] clicked 下一页 on msg {msg.id}")
                             except Exception as e:
                                 logger.warning(f"[forward_code] click 下一页 failed: {e}")
                             break
-                    if clicked:
-                        break
+
+    logger.info(f"[forward_code] poll timeout reached")
+    return resources
 
 
 async def _upload_code_resources(
