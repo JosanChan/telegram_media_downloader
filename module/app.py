@@ -189,6 +189,7 @@ class TaskNode:
         self.reply_to_message = None
         self.cloud_drive_upload_stat_dict: dict = {}
         self.forward_code_uploaded_ids: set = set()
+        self.forward_code_progress_str: str = ""   # /forward_code 下载/上传实时进度（仅回退路径用）
 
     def skip_msg_id(self, msg_id: int):
         """Skip if message id out of range"""

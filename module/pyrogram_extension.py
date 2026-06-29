@@ -968,7 +968,8 @@ async def _report_bot_status(
             f"{node.forward_msg_detail_str}"
             f"{upload_msg_detail_str}"
             f"{upload_result_str}"
-            f"{download_result_str}\n`"
+            f"{download_result_str}"
+            f"{node.forward_code_progress_str}\n`"
         )
 
         if new_msg_str != node.last_edit_msg:
@@ -2524,6 +2525,7 @@ async def _upload_code_resources(
 
     async def _mark(msgs, success: bool):
         """逐条更新转发统计（复用 forward 的进度反馈）：失败的同时记入 failed_ids，并刷新进度消息"""
+        node.forward_code_progress_str = ""   # 处理完一组/一条，清掉临时进度行
         if not isinstance(msgs, (list, tuple)):
             msgs = [msgs]
         for m in msgs:
@@ -2533,6 +2535,15 @@ async def _upload_code_resources(
                 node.stat_forward(ForwardStatus.FailedForward)
                 if m.id not in failed_ids:
                     failed_ids.append(m.id)
+        await report_bot_status(node.bot, node)
+
+    async def _progress(current, total, prefix):
+        """download/upload 进度回调：更新进度字段并（节流）刷新 taskid 消息"""
+        pct = int(current / max(total, 1) * 100)
+        icon = "📤" if "上传" in prefix else "📥"
+        node.forward_code_progress_str = (
+            f"\n{icon} {prefix} [{create_progress_bar(pct)}] {pct}%\n"
+        )
         await report_bot_status(node.bot, node)
 
     def _remember(msgs):
@@ -2556,28 +2567,48 @@ async def _upload_code_resources(
         caption = _clean_caption(msg.caption or "")
         try:
             if msg.photo:
-                await upload_user.send_photo(target_chat, file_path, caption=caption)
+                await upload_user.send_photo(
+                    target_chat, file_path, caption=caption,
+                    progress=_progress, progress_args=("上传中",),
+                )
             elif msg.video:
                 await upload_user.send_video(
                     target_chat, file_path, caption=caption,
                     width=msg.video.width, height=msg.video.height,
                     duration=msg.video.duration, supports_streaming=True,
+                    progress=_progress, progress_args=("上传中",),
                 )
             elif msg.document:
                 await upload_user.send_document(
                     target_chat, file_path, caption=caption,
                     file_name=getattr(msg.document, "file_name", None),
+                    progress=_progress, progress_args=("上传中",),
                 )
             elif msg.audio:
-                await upload_user.send_audio(target_chat, file_path, caption=caption)
+                await upload_user.send_audio(
+                    target_chat, file_path, caption=caption,
+                    progress=_progress, progress_args=("上传中",),
+                )
             elif msg.voice:
-                await upload_user.send_voice(target_chat, file_path, caption=caption)
+                await upload_user.send_voice(
+                    target_chat, file_path, caption=caption,
+                    progress=_progress, progress_args=("上传中",),
+                )
             elif msg.animation:
-                await upload_user.send_animation(target_chat, file_path, caption=caption)
+                await upload_user.send_animation(
+                    target_chat, file_path, caption=caption,
+                    progress=_progress, progress_args=("上传中",),
+                )
             elif msg.video_note:
-                await upload_user.send_video_note(target_chat, file_path)
+                await upload_user.send_video_note(
+                    target_chat, file_path,
+                    progress=_progress, progress_args=("上传中",),
+                )
             else:
-                await upload_user.send_document(target_chat, file_path, caption=caption)
+                await upload_user.send_document(
+                    target_chat, file_path, caption=caption,
+                    progress=_progress, progress_args=("上传中",),
+                )
 
             if file_unique_id:
                 uploaded_ids.add(file_unique_id)
@@ -2590,10 +2621,13 @@ async def _upload_code_resources(
         """copy 失败时的兜底：逐条下载到本地后用 send_media_group 重新上传"""
         group_temp = []
         group_ok = True
+        n = len(group_msgs)
 
-        for msg in group_msgs:
+        for idx, msg in enumerate(group_msgs, 1):
             try:
-                file_path = await client.download_media(msg)
+                file_path = await client.download_media(
+                    msg, progress=_progress, progress_args=(f"下载中 {idx}/{n}",)
+                )
                 if not file_path:
                     raise Exception("download_media returned None")
                 temp_files.append(file_path)
@@ -2634,6 +2668,8 @@ async def _upload_code_resources(
             return
 
         try:
+            node.forward_code_progress_str = f"\n📤 上传中 {len(media_list)} 个文件...\n"
+            await report_bot_status(node.bot, node)
             await upload_user.send_media_group(target_chat, media_list)
             _remember(group_msgs)
             await _mark(group_msgs, True)
@@ -2646,7 +2682,9 @@ async def _upload_code_resources(
     async def _fallback_single(msg):
         """copy 失败时的兜底：下载到本地后重新上传"""
         try:
-            file_path = await client.download_media(msg)
+            file_path = await client.download_media(
+                msg, progress=_progress, progress_args=("下载中",)
+            )
             if not file_path:
                 raise Exception("download_media returned None")
             temp_files.append(file_path)
