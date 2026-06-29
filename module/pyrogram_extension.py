@@ -2394,6 +2394,13 @@ def _clean_caption(text: str) -> str:
     return text
 
 
+def _code_file_uid(msg):
+    """取消息媒体的 file_unique_id（用于去重）"""
+    media = (getattr(msg, "photo", None) or getattr(msg, "video", None)
+             or getattr(msg, "document", None))
+    return getattr(media, "file_unique_id", None) if media else None
+
+
 async def forward_code_impl(
     client: pyrogram.Client,
     app: Application,
@@ -2411,15 +2418,11 @@ async def forward_code_impl(
 
     if not resources:
         node.stat_forward(ForwardStatus.FailedForward)
+        await report_bot_status(node.bot, node, immediate_reply=True)
         return []
 
+    # 统计与进度刷新已下沉到 _upload_code_resources，逐条实时更新
     failed_ids = await _upload_code_resources(client, node, resources)
-
-    for msg in resources:
-        if msg.id in failed_ids:
-            node.stat_forward(ForwardStatus.FailedForward)
-        else:
-            node.stat_forward(ForwardStatus.SuccessForward)
 
     return failed_ids
 
@@ -2440,13 +2443,15 @@ async def _poll_code_replies(
         await asyncio.sleep(poll_interval)
 
         try:
-            msgs = [m async for m in client.get_chat_history(bot_chat_id, limit=10)]
+            msgs = [m async for m in client.get_chat_history(bot_chat_id, limit=50)]
         except Exception as e:
             logger.warning(f"[forward_code] poll error: {e}")
             continue
 
         all_done = False
-        for msg in msgs:
+        # get_chat_history 返回「新→旧」，必须反转成「旧→新」处理，
+        # 否则 last_seen_id 在循环内被顶到本轮最大 id，会把同一批里更旧的消息全部跳过（丢资源）
+        for msg in reversed(msgs):
             if msg.id <= last_seen_id:
                 continue
             if not msg.from_user or msg.from_user.id != bot_chat_id:
@@ -2454,6 +2459,17 @@ async def _poll_code_replies(
             last_seen_id = msg.id
 
             text = (msg.text or msg.caption or "").strip()
+
+            # 诊断：打印 bot 每条回复的结构，便于判断资源是「一次发完 / 翻页 / 按钮列表」哪种形态
+            btn_texts = [
+                btn.text
+                for row in (msg.reply_markup.inline_keyboard if msg.reply_markup else [])
+                for btn in row
+            ]
+            logger.info(
+                f"[forward_code] poll msg {msg.id}: media={bool(msg.media)} "
+                f"group={msg.media_group_id} buttons={btn_texts} text={text[:40]!r}"
+            )
 
             if "已全部获取" in text:
                 all_done = True
@@ -2506,6 +2522,19 @@ async def _upload_code_resources(
         else:
             singles.append(msg)
 
+    async def _mark(msgs, success: bool):
+        """逐条更新转发统计（复用 forward 的进度反馈）：失败的同时记入 failed_ids，并刷新进度消息"""
+        if not isinstance(msgs, (list, tuple)):
+            msgs = [msgs]
+        for m in msgs:
+            if success:
+                node.stat_forward(ForwardStatus.SuccessForward)
+            else:
+                node.stat_forward(ForwardStatus.FailedForward)
+                if m.id not in failed_ids:
+                    failed_ids.append(m.id)
+        await report_bot_status(node.bot, node)
+
     async def _upload_single(msg, file_path, file_unique_id):
         if file_unique_id and file_unique_id in uploaded_ids:
             logger.info(f"[forward_code] skip duplicate: {file_unique_id}")
@@ -2545,6 +2574,9 @@ async def _upload_code_resources(
             return False
 
     for group_id, group_msgs in groups.items():
+        if node.is_stop_transmission:
+            break
+
         group_temp = []
         group_ok = True
 
@@ -2557,10 +2589,11 @@ async def _upload_code_resources(
                 group_temp.append(file_path)
             except Exception as e:
                 logger.warning(f"[forward_code] download msg {msg.id} failed: {e}")
-                failed_ids.append(msg.id)
                 group_ok = False
 
         if not group_ok:
+            # 整组任一文件下载失败则整组放弃，全组都计入失败，避免静默漏发+误报成功
+            await _mark(group_msgs, False)
             continue
 
         media_list = []
@@ -2578,37 +2611,34 @@ async def _upload_code_resources(
             else:
                 media_list.append(types.InputMediaDocument(file_path, caption=caption))
 
-        if media_list:
-            try:
-                if len(media_list) == 1:
-                    await _upload_single(
-                        group_msgs[0], group_temp[0],
-                        (getattr(group_msgs[0], 'photo', None) or
-                         getattr(group_msgs[0], 'video', None) or
-                         getattr(group_msgs[0], 'document', None)
-                         ).file_unique_id if (getattr(group_msgs[0], 'photo', None) or
-                            getattr(group_msgs[0], 'video', None) or
-                            getattr(group_msgs[0], 'document', None)) else None,
-                    )
-                else:
-                    await upload_user.send_media_group(target_chat, media_list)
-                    for msg in group_msgs:
-                        uid = (getattr(getattr(msg, 'photo', None), 'file_unique_id', None)
-                               or getattr(getattr(msg, 'video', None), 'file_unique_id', None)
-                               or getattr(getattr(msg, 'document', None), 'file_unique_id', None))
-                        if uid:
-                            uploaded_ids.add(uid)
-            except Exception as e:
-                logger.warning(f"[forward_code] send_media_group failed for group {group_id}: {e}, falling back")
-                for i, msg in enumerate(group_msgs):
-                    uid = (getattr(getattr(msg, 'photo', None), 'file_unique_id', None)
-                           or getattr(getattr(msg, 'video', None), 'file_unique_id', None)
-                           or getattr(getattr(msg, 'document', None), 'file_unique_id', None))
-                    ok = await _upload_single(msg, group_temp[i], uid)
-                    if not ok:
-                        failed_ids.append(msg.id)
+        if not media_list:
+            continue
+
+        if len(media_list) == 1:
+            # 媒体组里只剩 1 个有效媒体：走单条上传，并把成败计入统计（旧实现漏记导致误报成功）
+            ok = await _upload_single(
+                group_msgs[0], group_temp[0], _code_file_uid(group_msgs[0])
+            )
+            await _mark(group_msgs[0], ok)
+            continue
+
+        try:
+            await upload_user.send_media_group(target_chat, media_list)
+            for msg in group_msgs:
+                uid = _code_file_uid(msg)
+                if uid:
+                    uploaded_ids.add(uid)
+            await _mark(group_msgs, True)
+        except Exception as e:
+            logger.warning(f"[forward_code] send_media_group failed for group {group_id}: {e}, falling back")
+            for i, msg in enumerate(group_msgs):
+                ok = await _upload_single(msg, group_temp[i], _code_file_uid(msg))
+                await _mark(msg, ok)
 
     for msg in singles:
+        if node.is_stop_transmission:
+            break
+
         try:
             file_path = await client.download_media(msg)
             if not file_path:
@@ -2616,16 +2646,11 @@ async def _upload_code_resources(
             temp_files.append(file_path)
         except Exception as e:
             logger.warning(f"[forward_code] download msg {msg.id} failed: {e}")
-            failed_ids.append(msg.id)
+            await _mark(msg, False)
             continue
 
-        uid = (getattr(getattr(msg, 'photo', None), 'file_unique_id', None)
-               or getattr(getattr(msg, 'video', None), 'file_unique_id', None)
-               or getattr(getattr(msg, 'document', None), 'file_unique_id', None))
-
-        ok = await _upload_single(msg, file_path, uid)
-        if not ok:
-            failed_ids.append(msg.id)
+        ok = await _upload_single(msg, file_path, _code_file_uid(msg))
+        await _mark(msg, ok)
 
     for f in temp_files:
         try:
@@ -2635,9 +2660,3 @@ async def _upload_code_resources(
             pass
 
     return failed_ids
-    text = re.sub(r'\n?\s*火爆指数：[^\n]*\n?', '', text).strip()
-    # 删除末尾推广："剩下{N}V点 <URL>"（N 可变，删到 URL 结束）
-    text = re.sub(r'\n?\s*剩下\d+V点\s*https?://\S+', '', text).strip()
-    # 删除末尾固定导航广告块：从第一处连续 >=3 个 📱 起，删到文末
-    text = re.sub(r'\s*📱{3,}[\s\S]*$', '', text).strip()
-    return text
