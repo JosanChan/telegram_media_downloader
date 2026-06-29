@@ -2439,12 +2439,16 @@ async def _poll_code_replies(
 
     while time.time() - start_time < timeout and not done:
         await asyncio.sleep(poll_interval)
+        elapsed = time.time() - start_time
+        logger.info(f"[forward_code] poll cycle, elapsed={elapsed:.1f}s, done={done}")
 
         try:
             msgs = [m async for m in client.get_chat_history(bot_chat_id, limit=10)]
         except Exception as e:
             logger.warning(f"[forward_code] poll error: {e}")
             continue
+
+        logger.info(f"[forward_code] got {len(msgs)} messages from chat_history")
 
         for msg in msgs:
             if msg.id <= last_seen_id:
