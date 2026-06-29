@@ -2507,7 +2507,7 @@ async def _upload_code_resources(
     node: TaskNode,
     resources: list,
 ) -> list:
-    """下载资源消息的文件并上传到目标频道"""
+    """转发资源消息到目标频道：优先服务端 copy（不下载），失败再回退到下载+重新上传"""
     upload_user = node.upload_user or client
     target_chat = node.upload_telegram_chat_id
     temp_files = []
@@ -2534,6 +2534,19 @@ async def _upload_code_resources(
                 if m.id not in failed_ids:
                     failed_ids.append(m.id)
         await report_bot_status(node.bot, node)
+
+    def _remember(msgs):
+        """记录已转发的 file_unique_id，供翻页去重"""
+        for m in (msgs if isinstance(msgs, (list, tuple)) else [msgs]):
+            uid = _code_file_uid(m)
+            if uid:
+                uploaded_ids.add(uid)
+
+    def _all_duplicated(msgs):
+        """整组/单条的媒体是否都已转发过（翻页重复）"""
+        msgs = msgs if isinstance(msgs, (list, tuple)) else [msgs]
+        uids = [_code_file_uid(m) for m in msgs]
+        return all(u and u in uploaded_ids for u in uids)
 
     async def _upload_single(msg, file_path, file_unique_id):
         if file_unique_id and file_unique_id in uploaded_ids:
@@ -2573,10 +2586,8 @@ async def _upload_code_resources(
             logger.warning(f"[forward_code] upload msg {msg.id} failed: {e}")
             return False
 
-    for group_id, group_msgs in groups.items():
-        if node.is_stop_transmission:
-            break
-
+    async def _fallback_group(group_id, group_msgs):
+        """copy 失败时的兜底：逐条下载到本地后用 send_media_group 重新上传"""
         group_temp = []
         group_ok = True
 
@@ -2594,7 +2605,7 @@ async def _upload_code_resources(
         if not group_ok:
             # 整组任一文件下载失败则整组放弃，全组都计入失败，避免静默漏发+误报成功
             await _mark(group_msgs, False)
-            continue
+            return
 
         media_list = []
         for i, msg in enumerate(group_msgs):
@@ -2612,22 +2623,19 @@ async def _upload_code_resources(
                 media_list.append(types.InputMediaDocument(file_path, caption=caption))
 
         if not media_list:
-            continue
+            return
 
         if len(media_list) == 1:
-            # 媒体组里只剩 1 个有效媒体：走单条上传，并把成败计入统计（旧实现漏记导致误报成功）
+            # 媒体组里只剩 1 个有效媒体：走单条上传
             ok = await _upload_single(
                 group_msgs[0], group_temp[0], _code_file_uid(group_msgs[0])
             )
             await _mark(group_msgs[0], ok)
-            continue
+            return
 
         try:
             await upload_user.send_media_group(target_chat, media_list)
-            for msg in group_msgs:
-                uid = _code_file_uid(msg)
-                if uid:
-                    uploaded_ids.add(uid)
+            _remember(group_msgs)
             await _mark(group_msgs, True)
         except Exception as e:
             logger.warning(f"[forward_code] send_media_group failed for group {group_id}: {e}, falling back")
@@ -2635,10 +2643,8 @@ async def _upload_code_resources(
                 ok = await _upload_single(msg, group_temp[i], _code_file_uid(msg))
                 await _mark(msg, ok)
 
-    for msg in singles:
-        if node.is_stop_transmission:
-            break
-
+    async def _fallback_single(msg):
+        """copy 失败时的兜底：下载到本地后重新上传"""
         try:
             file_path = await client.download_media(msg)
             if not file_path:
@@ -2647,10 +2653,54 @@ async def _upload_code_resources(
         except Exception as e:
             logger.warning(f"[forward_code] download msg {msg.id} failed: {e}")
             await _mark(msg, False)
-            continue
+            return
 
         ok = await _upload_single(msg, file_path, _code_file_uid(msg))
         await _mark(msg, ok)
+
+    # ---- 媒体组：优先 copy_media_group（服务端复制，不下载不上传）----
+    for group_id, group_msgs in groups.items():
+        if node.is_stop_transmission:
+            break
+        if _all_duplicated(group_msgs):
+            logger.info(f"[forward_code] skip duplicate group {group_id}")
+            continue
+
+        captions = [_clean_caption(m.caption or "") for m in group_msgs]
+        try:
+            await client.copy_media_group(
+                target_chat, group_msgs[0].chat.id, group_msgs[0].id, captions=captions
+            )
+            _remember(group_msgs)
+            await _mark(group_msgs, True)
+        except Exception as e:
+            logger.warning(
+                f"[forward_code] copy_media_group failed for group {group_id}: {e}, "
+                "fallback to download+upload"
+            )
+            await _fallback_group(group_id, group_msgs)
+
+    # ---- 单条：优先 copy_message（服务端复制，不下载不上传）----
+    for msg in singles:
+        if node.is_stop_transmission:
+            break
+        if _all_duplicated(msg):
+            logger.info(f"[forward_code] skip duplicate single {msg.id}")
+            continue
+
+        try:
+            await client.copy_message(
+                target_chat, msg.chat.id, msg.id,
+                caption=_clean_caption(msg.caption or ""),
+            )
+            _remember(msg)
+            await _mark(msg, True)
+        except Exception as e:
+            logger.warning(
+                f"[forward_code] copy_message failed for msg {msg.id}: {e}, "
+                "fallback to download+upload"
+            )
+            await _fallback_single(msg)
 
     for f in temp_files:
         try:
