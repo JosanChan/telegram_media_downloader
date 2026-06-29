@@ -2402,10 +2402,10 @@ async def forward_code_impl(
     code: str,
 ) -> list:
     """通过提取码从 Bot 获取资源并转发到目标频道"""
-    await client.send_message(bot_chat_id, f"/start {code}")
-    logger.info(f"[forward_code] sent /start {code} to {bot_chat_id}")
+    sent = await client.send_message(bot_chat_id, f"/start {code}")
+    logger.info(f"[forward_code] sent /start {code} to {bot_chat_id}, start_msg_id={sent.id}")
 
-    resources = await _poll_code_replies(client, bot_chat_id, timeout=30)
+    resources = await _poll_code_replies(client, bot_chat_id, sent.id, timeout=30)
 
     logger.info(f"[forward_code] collected {len(resources)} resource messages for code {code}")
 
@@ -2427,18 +2427,17 @@ async def forward_code_impl(
 async def _poll_code_replies(
     client: pyrogram.Client,
     bot_chat_id: int,
+    start_msg_id: int,
     timeout: int = 30,
 ) -> list:
     """轮询 bot 私聊，收集回复中的媒体消息，处理翻页"""
     poll_interval = 2
     start_time = time.time()
-    last_seen_id = 0
+    last_seen_id = start_msg_id
     resources = []
 
     while time.time() - start_time < timeout:
         await asyncio.sleep(poll_interval)
-        elapsed = time.time() - start_time
-        logger.info(f"[forward_code] poll cycle, elapsed={elapsed:.1f}s")
 
         try:
             msgs = [m async for m in client.get_chat_history(bot_chat_id, limit=10)]
@@ -2446,15 +2445,12 @@ async def _poll_code_replies(
             logger.warning(f"[forward_code] poll error: {e}")
             continue
 
-        logger.info(f"[forward_code] got {len(msgs)} messages from chat_history")
-
         for msg in msgs:
             if msg.id <= last_seen_id:
                 continue
             if not msg.from_user or msg.from_user.id != bot_chat_id:
                 continue
-            if msg.id > last_seen_id:
-                last_seen_id = msg.id
+            last_seen_id = msg.id
 
             text = (msg.text or msg.caption or "").strip()
 
